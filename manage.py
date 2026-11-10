@@ -1,0 +1,49 @@
+import sys
+import os
+import subprocess
+
+def show_banner():
+    print("=" * 65)
+    print("        WINDOWS HELLO REFINED - FACE ID SYSTEM")
+    print("   High-Speed Biometric Authentication on Any Standard Camera")
+    print("=" * 65)
+
+def main():
+    show_banner()
+    python_exe = os.path.join(os.path.dirname(__file__), ".venv", "Scripts", "python.exe")
+
+    print("\nOptions:")
+    print("  1. Enroll Face Profile (Run this first!)")
+    print("  2. Live Camera & Face Recognition Test (Visual HUD)")
+    print("  3. Start Background Face ID Daemon (Named Pipe Service)")
+    print("  4. Start Walk-Away Auto-Lock (Presence Guard)")
+    print("  5. Register Native Windows Lock Screen Credential Provider")
+    print("  6. Unregister Credential Provider")
+    print("  0. Exit")
+
+    choice = input("\nSelect an option [0-6]: ").strip()
+
+    if choice == "1":
+        subprocess.run([python_exe, "enrollment/enroll.py"])
+    elif choice == "2":
+        subprocess.run([python_exe, "engine/test_live.py"])
+    elif choice == "3":
+        subprocess.run([python_exe, "service/face_service.py"])
+    elif choice == "4":
+        subprocess.run([python_exe, "service/session_guard.py"])
+    elif choice == "5":
+        dll_path = os.path.abspath("credential_provider/FaceCredentialProvider.dll")
+        print(f"Registering: {dll_path}")
+        subprocess.run(["regsvr32", "/s", dll_path])
+        print("[+] Credential Provider registered with Windows LogonUI!")
+    elif choice == "6":
+        dll_path = os.path.abspath("credential_provider/FaceCredentialProvider.dll")
+        subprocess.run(["regsvr32", "/u", "/s", dll_path])
+        print("[-] Credential Provider unregistered.")
+    elif choice == "0":
+        print("Exiting.")
+    else:
+        print("Invalid choice.")
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,25 @@
+@echo off
+setlocal
+
+call "D:\Visual Studio\VC\Auxiliary\Build\vcvars64.bat"
+
+echo Compiling FaceCredentialProvider.dll (x64)...
+cd /d "%~dp0"
+
+cl.exe /O2 /Oi /EHsc /std:c++17 /W3 /D_USRDLL /D_WINDLL /DUNICODE /D_UNICODE ^
+    FaceCredentialProvider.cpp FaceCredential.cpp dllmain.cpp ^
+    /link /DLL /DEF:FaceCredentialProvider.def ^
+    /OUT:FaceCredentialProvider.dll ^
+    user32.lib advapi32.lib shlwapi.lib ole32.lib secur32.lib
+
+if %ERRORLEVEL% equ 0 (
+    echo.
+    echo =======================================================
+    echo [SUCCESS] FaceCredentialProvider.dll built successfully!
+    echo =======================================================
+) else (
+    echo.
+    echo [ERROR] Build failed with code %ERRORLEVEL%
+)
+
+endlocal
