@@ -197,6 +197,24 @@ void FaceOverlay::RunAnimation()
     int posX = (screenW - winW) / 2;
     int posY = 45;
 
+    // Check if a Windows Security dialog is open (CredUI scenario)
+    HWND hwndSec = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
+    if (!hwndSec) hwndSec = FindWindowW(NULL, L"Windows Security");
+    if (!hwndSec) hwndSec = FindWindowW(L"Credential Dialog Xaml Host", NULL);
+
+    if (hwndSec && IsWindowVisible(hwndSec))
+    {
+        RECT rc;
+        if (GetWindowRect(hwndSec, &rc))
+        {
+            posX = rc.left + ((rc.right - rc.left) - winW) / 2;
+            posY = rc.top - winH + 35;
+            if (posY < 10) posY = rc.top + 10;
+            LogOverlay(L"CredUI dialog found at (%ld,%ld %ldx%ld). Anchoring overlay at (%d,%d)",
+                       rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, posX, posY);
+        }
+    }
+
     m_hwnd = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
         className,
@@ -260,6 +278,22 @@ void FaceOverlay::RunAnimation()
         {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
+        }
+
+        // Anchor dynamically to CredUI dialog if active
+        HWND hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
+        if (!hwndDlg) hwndDlg = FindWindowW(NULL, L"Windows Security");
+        if (!hwndDlg) hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", NULL);
+        if (hwndDlg && IsWindowVisible(hwndDlg))
+        {
+            RECT rc;
+            if (GetWindowRect(hwndDlg, &rc))
+            {
+                int targetX = rc.left + ((rc.right - rc.left) - winW) / 2;
+                int targetY = rc.top - winH + 35;
+                if (targetY < 10) targetY = rc.top + 10;
+                SetWindowPos(m_hwnd, HWND_TOPMOST, targetX, targetY, winW, winH, SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOSIZE);
+            }
         }
 
         EnterCriticalSection(&m_cs);

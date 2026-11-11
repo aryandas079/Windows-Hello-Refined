@@ -640,11 +640,19 @@ static bool IsLockScreenDesktop()
     return false;
 }
 
-static void SimulatePinInput(LPCWSTR pszPin)
+static bool IsCredUIDialogOpen()
+{
+    HWND hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
+    if (!hwndDlg) hwndDlg = FindWindowW(NULL, L"Windows Security");
+    if (!hwndDlg) hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", NULL);
+    return (hwndDlg && IsWindowVisible(hwndDlg));
+}
+
+static void SimulatePinInput(LPCWSTR pszPin, bool bIsCredUI = false)
 {
     if (!pszPin || wcslen(pszPin) == 0) return;
 
-    LogMsg(L"SimulatePinInput: starting simulation for %d characters...", (int)wcslen(pszPin));
+    LogMsg(L"SimulatePinInput: starting simulation for %d characters (bIsCredUI=%d)...", (int)wcslen(pszPin), bIsCredUI);
 
     HDESK hInputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
     if (hInputDesk)
@@ -653,15 +661,28 @@ static void SimulatePinInput(LPCWSTR pszPin)
         LogMsg(L"SimulatePinInput: attached to input desktop.");
     }
 
-    // Step 1: Send Spacebar to wake and slide up the lock screen curtain
-    LogMsg(L"SimulatePinInput: waking/dismissing lock screen curtain with Spacebar...");
-    SendKey(VK_SPACE);
+    if (!bIsCredUI)
+    {
+        // Step 1: Lock screen wake curtain with Spacebar and wait for slide-up
+        LogMsg(L"SimulatePinInput: waking/dismissing lock screen curtain with Spacebar...");
+        SendKey(VK_SPACE);
+        Sleep(400);
+    }
+    else
+    {
+        // In CredUI dialog box: ensure the dialog window has focus
+        HWND hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
+        if (!hwndDlg) hwndDlg = FindWindowW(NULL, L"Windows Security");
+        if (!hwndDlg) hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", NULL);
+        if (hwndDlg)
+        {
+            SetForegroundWindow(hwndDlg);
+            Sleep(150);
+        }
+    }
 
-    // Wait 400ms for lock screen curtain slide-up animation to complete
-    Sleep(400);
-
-    // Step 2: Clear the wake-up space or any accidental previous input from the password/PIN box
-    for (int b = 0; b < 12; b++)
+    // Step 2: Clear any accidental or previous input from the password/PIN box
+    for (int b = 0; b < 16; b++)
     {
         SendKey(VK_BACK);
     }
@@ -855,33 +876,42 @@ void FaceCredential::DoVerification()
                 }
             }
 
-            LPCWSTR secret = (m_hasPassword && wcslen(m_password) > 0) ? m_password : m_pin;
+            bool bIsCredUI = (m_cpus == CPUS_CREDUI);
+            LPCWSTR secret = (wcslen(m_pin) > 0) ? m_pin : m_password;
 
             if (m_pProvider)
             {
-                LogMsg(L"Face verified! Triggering CredentialsChanged for native automatic unlock...");
+                LogMsg(L"Face verified! Triggering CredentialsChanged (bIsCredUI=%d)...", bIsCredUI);
                 m_pProvider->OnFaceVerified();
             }
 
             if (wcslen(secret) > 0)
             {
-                LogMsg(L"Face verified! Triggering initial password/PIN auto-fill (%d characters)...", (int)wcslen(secret));
-                SimulatePinInput(secret);
+                LogMsg(L"Face verified! Triggering initial password/PIN auto-fill (%d characters, bIsCredUI=%d)...",
+                       (int)wcslen(secret), bIsCredUI);
+                SimulatePinInput(secret, bIsCredUI);
 
                 // Guardian watcher loop:
-                // If the user clicks the screen or presses a key AFTER verification has finished,
-                // or if the workstation is still locked behind the curtain, we detect the interaction
-                // and instantly re-type the credentials so the user is never stuck with an empty box!
-                LogMsg(L"Starting post-verification guardian loop for active user interaction...");
+                // If the user clicks the screen or dialog AFTER verification has finished,
+                // we detect the interaction and re-type the credentials so the user is never stuck with an empty box!
+                LogMsg(L"Starting post-verification guardian loop (bIsCredUI=%d)...", bIsCredUI);
                 DWORD startTime = GetTickCount();
                 DWORD lastAutoRetry = startTime;
 
                 while (!m_bStopThread && (GetTickCount() - startTime < 8000))
                 {
                     Sleep(60);
-                    if (m_bStopThread || !IsLockScreenDesktop())
+                    if (m_bStopThread) break;
+
+                    if (!bIsCredUI && !IsLockScreenDesktop())
                     {
                         LogMsg(L"Guardian: Workstation unlocked or desktop switched. Exiting guardian loop.");
+                        break;
+                    }
+
+                    if (bIsCredUI && !IsCredUIDialogOpen())
+                    {
+                        LogMsg(L"Guardian: CredUI dialog closed. Authentication successful.");
                         break;
                     }
 
@@ -898,16 +928,17 @@ void FaceCredential::DoVerification()
                         LogMsg(L"Guardian: Interaction detected (click=%d, key=%d, periodic=%d). Auto-filling credentials...",
                                userClicked, userKey, periodicRetry);
 
-                        // If user clicked or pressed key, wait 180ms for curtain movement / focus
                         if (userClicked || userKey)
                         {
                             Sleep(180);
                         }
 
-                        if (m_bStopThread || !IsLockScreenDesktop()) break;
+                        if (m_bStopThread) break;
+                        if (!bIsCredUI && !IsLockScreenDesktop()) break;
+                        if (bIsCredUI && !IsCredUIDialogOpen()) break;
 
                         // Clear and re-type
-                        for (int b = 0; b < 12; b++) SendKey(VK_BACK);
+                        for (int b = 0; b < 16; b++) SendKey(VK_BACK);
                         Sleep(25);
                         for (size_t i = 0; i < wcslen(secret); i++) SendUnicodeChar(secret[i]);
                         Sleep(50);
@@ -1080,13 +1111,35 @@ HRESULT FaceCredential::GetSerialization(CREDENTIAL_PROVIDER_GET_SERIALIZATION_R
                                         LPWSTR* ppszOptionalStatusText,
                                         CREDENTIAL_PROVIDER_STATUS_ICON* pcpsiOptionalStatusIcon)
 {
-    LogMsg(L"FaceCredential::GetSerialization called (m_bVerified=%d, m_hasPassword=%d, pinLen=%d)", m_bVerified, m_hasPassword, (int)wcslen(m_pin));
+    LogMsg(L"FaceCredential::GetSerialization called (m_bVerified=%d, scenario=%d)", m_bVerified, m_cpus);
     if (!pcpgsr || !pcpcs) return E_POINTER;
 
-    // Do NOT return packed credentials to LSA. For Microsoft accounts / PIN login,
-    // LSA CredPack Negotiate cannot verify cloud credentials offline on the lock screen
-    // (status 0xC000006D, substatus 0xC000023C), which causes LogonUI to shake and reset the screen.
-    // Instead, unlock is smoothly performed by SimulatePinInput directly into the native Windows Hello logon tile.
+    // For in-app CredUI prompts (e.g. Edge, Chrome, UAC):
+    // If our tile is selected in the dialog, return packed credentials to CredUI directly!
+    if (m_cpus == CPUS_CREDUI && m_bVerified)
+    {
+        LPCWSTR secret = (wcslen(m_pin) > 0) ? m_pin : m_password;
+        if (secret && wcslen(secret) > 0)
+        {
+            ULONG ulPackage = 0;
+            BYTE* pBuffer = NULL;
+            DWORD cbBuffer = 0;
+            HRESULT hr = PackLogonCredentials(m_domain, m_username, secret, &ulPackage, &pBuffer, &cbBuffer);
+            if (SUCCEEDED(hr))
+            {
+                *pcpgsr = CPGSR_RETURN_CREDENTIAL_FINISHED;
+                pcpcs->ulAuthenticationPackage = ulPackage;
+                pcpcs->cbSerialization = cbBuffer;
+                pcpcs->rgbSerialization = pBuffer;
+                pcpcs->clsidCredentialProvider = CLSID_FaceCredentialProvider;
+                LogMsg(L"GetSerialization: Successfully returned packed credentials for %s in CPUS_CREDUI!", m_username);
+                return S_OK;
+            }
+        }
+    }
+
+    // For Lock Screen, return NO_CREDENTIAL_FINISHED so LSA never rejects offline negotiate
+    // (unlock is smoothly driven by SimulatePinInput directly into the native Windows Hello logon tile).
     *pcpgsr = CPGSR_NO_CREDENTIAL_FINISHED;
     return S_OK;
 }

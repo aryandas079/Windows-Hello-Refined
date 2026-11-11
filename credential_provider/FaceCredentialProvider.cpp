@@ -233,14 +233,24 @@ HRESULT FaceCredentialProvider::GetCredentialCount(DWORD* pdwCount, DWORD* pdwDe
 {
     if (!pdwCount || !pdwDefault || !pbAutoLogonWithDefault) return E_POINTER;
 
-    // Return 0 so LogonUI does NOT show any tile under "Sign-in options".
-    // Windows Hello Face acts as an ambient biometric overlay on top of the
-    // default Windows Hello PIN unlock interface!
+    if (m_cpus == CPUS_CREDUI)
+    {
+        // In CredUI (e.g. Edge, Chrome, UAC, App prompts):
+        // Make Windows Hello Face visible directly inside the Windows Security dialog!
+        *pdwCount = 1;
+        *pdwDefault = 0;
+        *pbAutoLogonWithDefault = FALSE;
+        LogProvider(L"GetCredentialCount: CPUS_CREDUI scenario - returning count=1, default=0");
+        return S_OK;
+    }
+
+    // Return 0 for Lock Screen so LogonUI does NOT show an extra tile under "Sign-in options".
+    // Windows Hello Face acts as an ambient biometric overlay on top of the default Windows Hello PIN unlock interface!
     *pdwCount = 0;
     *pdwDefault = CREDENTIAL_PROVIDER_NO_DEFAULT;
     *pbAutoLogonWithDefault = FALSE;
 
-    LogProvider(L"GetCredentialCount: returning count=0 (Face runs as ambient overlay on top of Windows Hello PIN)");
+    LogProvider(L"GetCredentialCount: lock screen scenario - returning count=0 (ambient overlay)");
     return S_OK;
 }
 
