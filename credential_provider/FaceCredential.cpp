@@ -33,6 +33,9 @@ static void LogMsg(const WCHAR* fmt, ...)
     }
 }
 
+static void SendKey(WORD vk, bool bExtended = false);
+static bool IsCredUIDialogOpen();
+
 static LPWSTR QueryActiveSessionUserSid()
 {
     DWORD sessionId = WTSGetActiveConsoleSessionId();
@@ -310,6 +313,15 @@ void FaceCredential::StartVerification()
         m_bStopThread = FALSE;
         LogMsg(L"Starting verification thread...");
         m_overlay.Show(m_username, (int)m_cpus);
+
+        bool bIsCredUI = (m_cpus == CPUS_CREDUI || (int)m_cpus == 3 || (int)m_cpus == 4 || IsCredUIDialogOpen());
+        if (!bIsCredUI)
+        {
+            // Pre-dismiss lock screen curtain with Spacebar so LogonUI is ready immediately
+            LogMsg(L"StartVerification: pre-dismissing lock screen curtain with Spacebar...");
+            SendKey(VK_SPACE);
+        }
+
         m_hThread = CreateThread(NULL, 0, VerificationThread, this, 0, NULL);
     }
     LeaveCriticalSection(&m_cs);
@@ -579,7 +591,7 @@ static void ExtractJsonString(const char* json, const char* key, WCHAR* outBuf, 
     MultiByteToWideChar(CP_UTF8, 0, val, -1, outBuf, maxChars);
 }
 
-static void SendKey(WORD vk, bool bExtended = false)
+static void SendKey(WORD vk, bool bExtended)
 {
     INPUT inputs[2] = {0};
     inputs[0].type = INPUT_KEYBOARD;
@@ -592,14 +604,12 @@ static void SendKey(WORD vk, bool bExtended = false)
     inputs[1].ki.wScan = inputs[0].ki.wScan;
     inputs[1].ki.dwFlags = (bExtended ? KEYEVENTF_EXTENDEDKEY : 0) | KEYEVENTF_KEYUP;
 
-    UINT r1 = SendInput(1, &inputs[0], sizeof(INPUT));
-    Sleep(16);
-    UINT r2 = SendInput(1, &inputs[1], sizeof(INPUT));
-    Sleep(16);
-    if (r1 == 0 || r2 == 0)
+    UINT sent = SendInput(2, inputs, sizeof(INPUT));
+    if (sent != 2)
     {
-        LogMsg(L"SendKey(0x%04X) SendInput failed! r1=%u, r2=%u, err=%lu", vk, r1, r2, GetLastError());
+        LogMsg(L"SendKey(0x%04X) SendInput failed! sent=%u, err=%lu", vk, sent, GetLastError());
     }
+    Sleep(2);
 }
 
 static void SendUnicodeChar(WCHAR ch)
@@ -615,14 +625,12 @@ static void SendUnicodeChar(WCHAR ch)
     inputs[1].ki.wScan = ch;
     inputs[1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
 
-    UINT r1 = SendInput(1, &inputs[0], sizeof(INPUT));
-    Sleep(18);
-    UINT r2 = SendInput(1, &inputs[1], sizeof(INPUT));
-    Sleep(18);
-    if (r1 == 0 || r2 == 0)
+    UINT sent = SendInput(2, inputs, sizeof(INPUT));
+    if (sent != 2)
     {
-        LogMsg(L"SendUnicodeChar('%c') SendInput failed! r1=%u, r2=%u, err=%lu", ch, r1, r2, GetLastError());
+        LogMsg(L"SendUnicodeChar('%c') SendInput failed! sent=%u, err=%lu", ch, sent, GetLastError());
     }
+    Sleep(3);
 }
 
 static bool IsLockScreenDesktop()
@@ -671,10 +679,10 @@ static void SimulatePinInput(LPCWSTR pszPin, bool bIsCredUI = false)
 
     if (!bIsCredUI)
     {
-        // Step 1: Dismiss lock screen curtain with Spacebar and wait for full XAML slide-up
-        LogMsg(L"SimulatePinInput: dismissing lock screen curtain with Spacebar...");
+        // Curtain was already pre-dismissed in StartVerification. Send a quick Spacebar tap and short sleep
+        LogMsg(L"SimulatePinInput: ensuring lock screen curtain is dismissed...");
         SendKey(VK_SPACE);
-        Sleep(850);
+        Sleep(60);
     }
     else
     {
@@ -686,16 +694,16 @@ static void SimulatePinInput(LPCWSTR pszPin, bool bIsCredUI = false)
         {
             SetForegroundWindow(hwndDlg);
             BringWindowToTop(hwndDlg);
-            Sleep(100);
+            Sleep(30);
         }
     }
 
-    // Step 2: Clear any accidental or previous input from the password/PIN box
-    for (int b = 0; b < 16; b++)
+    // Step 2: Clear any previous input from the password/PIN box
+    for (int b = 0; b < 8; b++)
     {
         SendKey(VK_BACK);
     }
-    Sleep(30);
+    Sleep(15);
 
     // Step 3: Type each character with genuine hardware Unicode packets (KEYEVENTF_UNICODE)
     LogMsg(L"SimulatePinInput: typing password/PIN characters with KEYEVENTF_UNICODE...");
@@ -705,7 +713,7 @@ static void SimulatePinInput(LPCWSTR pszPin, bool bIsCredUI = false)
     }
 
     // Step 4: Submit password/PIN with Enter
-    Sleep(80);
+    Sleep(35);
     SendKey(VK_RETURN);
     LogMsg(L"SimulatePinInput: password/PIN entered and submitted.");
 
@@ -898,16 +906,12 @@ void FaceCredential::DoVerification()
             {
                 if (!bIsCredUI)
                 {
-                    // WAKE / DISMISS CURTAIN IMMEDIATELY when face is verified!
-                    // The curtain starts sliding away concurrently while wink & chime play
-                    LogMsg(L"Face verified: dismissing lock screen curtain during animation...");
+                    LogMsg(L"Face verified: ensuring lock screen curtain is awake...");
                     SendKey(VK_SPACE);
                 }
 
-                // Wait for the wink animation and audio chime (~800ms)
-                Sleep(800);
-
-                LogMsg(L"Face verified! Triggering initial password/PIN auto-fill (%d characters, bIsCredUI=%d)...",
+                // Fire PIN auto-fill immediately while wink animation and chime play concurrently
+                LogMsg(L"Face verified! Triggering instant password/PIN auto-fill (%d characters, bIsCredUI=%d)...",
                        (int)wcslen(secret), bIsCredUI);
                 SimulatePinInput(secret, bIsCredUI);
 

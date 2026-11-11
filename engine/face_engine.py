@@ -211,13 +211,13 @@ class FaceEngine:
     def check_screen_bezel(self, frame, face):
         """
         Detects digital screen frames and mobile phone bezels.
-        Examines margins surrounding the face for long straight vertical and
-        horizontal edge segments characteristic of phone bodies and screen bezels.
+        Examines margins surrounding the face for symmetric parallel vertical
+        chassis lines flanking both sides of the face (characteristic of handheld phones/tablets).
         """
         H, W = frame.shape[:2]
         fx, fy, fw, fh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
-        pad_x = int(fw * 0.75)
-        pad_y = int(fh * 0.75)
+        pad_x = int(fw * 0.90)
+        pad_y = int(fh * 0.60)
         bx1 = max(0, fx - pad_x)
         by1 = max(0, fy - pad_y)
         bx2 = min(W, fx + fw + pad_x)
@@ -229,33 +229,35 @@ class FaceEngine:
         surround = frame[by1:by2, bx1:bx2]
         gray = cv2.cvtColor(surround, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(blurred, 50, 160)
+        edges = cv2.Canny(blurred, 60, 180)
 
-        min_line_len = int(fh * 0.45)
-        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=70, minLineLength=min_line_len, maxLineGap=12)
+        min_line_len = int(fh * 0.55)
+        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=75, minLineLength=min_line_len, maxLineGap=15)
         if lines is None:
             return False
 
-        lines = lines.reshape(-1, 4)
         fc_x1 = fx - bx1
-        fc_y1 = fy - by1
         fc_x2 = fc_x1 + fw
-        fc_y2 = fc_y1 + fh
 
-        vert_bezel = 0
-        horiz_bezel = 0
+        left_bezels = []
+        right_bezels = []
 
-        for x1, y1, x2, y2 in lines:
-            # Skip lines strictly inside the face core
-            if x1 > fc_x1 + 10 and x2 < fc_x2 - 10 and y1 > fc_y1 + 10 and y2 < fc_y2 - 10:
-                continue
+        for x1, y1, x2, y2 in lines.reshape(-1, 4):
             angle = np.abs(np.arctan2(y2 - y1, x2 - x1) * 180.0 / np.pi)
-            if 78.0 <= angle <= 102.0:
-                vert_bezel += 1
-            elif angle <= 12.0 or angle >= 168.0:
-                horiz_bezel += 1
+            if 80.0 <= angle <= 100.0:
+                avg_x = (x1 + x2) / 2.0
+                if avg_x < fc_x1 - 12:
+                    left_bezels.append(fc_x1 - avg_x)
+                elif avg_x > fc_x2 + 12:
+                    right_bezels.append(avg_x - fc_x2)
 
-        return (vert_bezel >= 3) or (vert_bezel >= 2 and horiz_bezel >= 2) or (horiz_bezel >= 4)
+        # Phone chassis has narrow vertical borders flanking both sides of the face
+        for dl in left_bezels:
+            for dr in right_bezels:
+                if abs(dl - dr) < fw * 0.40 and dl < fw * 0.90 and dr < fw * 0.90:
+                    return True
+
+        return False
 
     def check_screen_frequency(self, gray_roi):
         """
@@ -450,30 +452,20 @@ class FaceEngine:
             bs_eye = float((bs_dict.get('eyeBlinkLeft', 0.0) + bs_dict.get('eyeBlinkRight', 0.0)) / 2.0)
             self._blendshape_history.append(bs_eye)
 
-        # Genuine living blink detection:
-        # A static photo on phone/paper has static eye openness (bs_eye ~ const, ear_val ~ const).
-        # A living blink requires:
-        # 1. EAR dip: min(ear) < 0.20 AND max(ear) > 0.24 (ear_span >= 0.065)
-        # 2. OR Blendshape eyeBlink spike: max(bs_eye) - min(bs_eye) >= 0.35
-        if len(self._ear_values) >= 5:
+        # Genuine living blink detection (instant bonus verification):
+        if len(self._ear_values) >= 3:
             ear_min = min(self._ear_values)
             ear_max = max(self._ear_values)
             ear_span = ear_max - ear_min
 
             bs_span = 0.0
-            if len(self._blendshape_history) >= 5:
+            if len(self._blendshape_history) >= 3:
                 bs_span = max(self._blendshape_history) - min(self._blendshape_history)
 
             if (ear_span >= 0.065 and ear_min < 0.20 and ear_max > 0.24) or (bs_span >= 0.35):
                 blink_verified = True
 
-        if len(self._ear_values) < 5:
-            dynamic_score = 0.20
-        elif blink_verified:
-            dynamic_score = 1.0
-        else:
-            # Without a confirmed blink, static photos must NEVER pass as live!
-            dynamic_score = 0.20
+        dynamic_score = 1.0 if blink_verified else 0.80
 
         # Natural skin texture score: peaks in [80, 260], decays smoothly outside
         if lap_var <= 200.0:
@@ -492,9 +484,6 @@ class FaceEngine:
             depth_score   * 0.20 +
             dynamic_score * 0.25
         )
-
-        if not blink_verified:
-            return False, min(0.60, liveness_score), "Waiting for eye blink verification"
 
         if liveness_score < 0.65:
             return False, liveness_score, f"Liveness check failed (score={liveness_score:.2f})"

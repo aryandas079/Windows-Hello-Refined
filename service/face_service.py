@@ -69,9 +69,6 @@ class FaceDaemon:
             if not self.camera.isOpened():
                 self.camera = cv2.VideoCapture(self.camera_index, cv2.CAP_MSMF)
             if self.camera.isOpened():
-                self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-                self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
                 self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         return self.camera.isOpened() if self.camera else False
 

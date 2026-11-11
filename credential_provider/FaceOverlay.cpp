@@ -232,10 +232,10 @@ void FaceOverlay::RunAnimation()
         }
 
         // Precise pixel alignment against Windows Security dialog:
-        // Shifts by -36px X to match content column center (340px)
-        // Positions Y so face icon (cy=30) lands exactly at 9-dot icon center (278px)
-        posX = cardCenterX - (winW / 2) - 36;
-        posY = cardCenterY - 172;
+        // Horizontally centered on card center (matches 9-dot icon at cardCenterX)
+        // Positions Y so face icon (cy=30) lands exactly at 9-dot icon center (cardCenterY - 96)
+        posX = cardCenterX - (winW / 2);
+        posY = cardCenterY - 126;
         LogOverlay(L"CredUI dialog scenario: overlay positioned over PIN icon at (%d,%d)", posX, posY);
     }
 
@@ -319,8 +319,8 @@ void FaceOverlay::RunAnimation()
             {
                 int cardCenterX = rcSec.left + (rcSec.right - rcSec.left) / 2;
                 int cardCenterY = rcSec.top + (rcSec.bottom - rcSec.top) / 2;
-                int targetX = cardCenterX - (winW / 2) - 36;
-                int targetY = cardCenterY - 172;
+                int targetX = cardCenterX - (winW / 2);
+                int targetY = cardCenterY - 126;
                 if (targetX != posX || targetY != posY)
                 {
                     posX = targetX;
