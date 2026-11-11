@@ -19,7 +19,7 @@ public:
 
     void Show(const WCHAR* username = L"Aryan", int scenario = 1);
     void SetState(OVERLAY_STATE state, const WCHAR* customText = nullptr);
-    void Hide();
+    void Hide(bool bForce = false);
 
 private:
     static DWORD WINAPI AnimationThread(LPVOID lpParam);

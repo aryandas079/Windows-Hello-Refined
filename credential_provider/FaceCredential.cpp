@@ -739,8 +739,13 @@ static DWORD WINAPI PinSimulationThread(LPVOID lpParam)
             LogMsg(L"PinSimulationThread: OpenInputDesktop failed, err=%lu", GetLastError());
         }
     }
-    else
+
+    if (params->bIsCredUI)
     {
+        // CredUI scenario: wait for complete Windows Hello celebration (smile, wink, chime) before typing PIN
+        LogMsg(L"PinSimulationThread: waiting for complete Windows Hello celebration animation on CredUI dialog...");
+        Sleep(1400);
+
         // CredUI scenario: ensure dialog window has focus and click into PIN box
         HWND hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
         if (!hwndDlg) hwndDlg = FindWindowW(NULL, L"Windows Security");
@@ -757,7 +762,7 @@ static DWORD WINAPI PinSimulationThread(LPVOID lpParam)
                 int dlgW = rcDlg.right - rcDlg.left;
                 int dlgH = rcDlg.bottom - rcDlg.top;
                 int pinX = rcDlg.left + dlgW / 2;
-                int pinY = rcDlg.top + (int)(dlgH * 0.77);
+                int pinY = rcDlg.top + (int)(dlgH * 0.67);
 
                 POINT oldCursor;
                 GetCursorPos(&oldCursor);
@@ -772,13 +777,14 @@ static DWORD WINAPI PinSimulationThread(LPVOID lpParam)
             }
         }
     }
-
-    if (!params->bIsCredUI)
+    else
     {
-        // Step 1: Tap Spacebar to dismiss lock screen curtain and allow XAML input field to gain focus
-        LogMsg(L"PinSimulationThread: tapping Spacebar to dismiss lock curtain...");
-        FastSendKey(VK_SPACE);
-        Sleep(400);
+        // Lock screen scenario: lift the lock screen curtain smoothly with VK_UP
+        LogMsg(L"PinSimulationThread: lifting lock curtain with VK_UP...");
+        keybd_event(VK_UP, 0x48, 0, 0);
+        Sleep(15);
+        keybd_event(VK_UP, 0x48, KEYEVENTF_KEYUP, 0);
+        Sleep(380);
     }
 
     // Step 2: Clear any accidental or previous input from the password/PIN box
@@ -990,15 +996,8 @@ void FaceCredential::DoVerification()
                 EnterCriticalSection(&m_cs);
                 m_bVerified = TRUE;
                 m_hasPassword = (wcslen(m_password) > 0);
-                if (m_hasPassword || wcslen(m_pin) > 0)
-                {
-                    StringCchPrintfW(m_statusText, ARRAYSIZE(m_statusText), L"Welcome back, %s!", m_username);
-                }
-                else
-                {
-                    StringCchPrintfW(m_statusText, ARRAYSIZE(m_statusText), L"Face verified! Hello %s", m_username);
-                }
-                m_overlay.SetState(OVERLAY_VERIFIED);
+                StringCchPrintfW(m_statusText, ARRAYSIZE(m_statusText), L"Welcome, %s", m_username);
+                m_overlay.SetState(OVERLAY_VERIFIED, m_statusText);
                 LeaveCriticalSection(&m_cs);
 
                 if (m_pEvents)

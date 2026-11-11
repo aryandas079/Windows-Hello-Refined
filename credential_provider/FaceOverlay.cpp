@@ -69,6 +69,39 @@ static void PlayFeedbackSound()
     }
 }
 
+static inline void PremultiplyAlpha(void* pBits, int totalPixels)
+{
+    if (!pBits) return;
+    RGBQUAD* pPixel = reinterpret_cast<RGBQUAD*>(pBits);
+    for (int i = 0; i < totalPixels; i++)
+    {
+        BYTE a = pPixel[i].rgbReserved;
+        if (a == 0)
+        {
+            pPixel[i].rgbRed = 0;
+            pPixel[i].rgbGreen = 0;
+            pPixel[i].rgbBlue = 0;
+        }
+        else if (a < 255)
+        {
+            pPixel[i].rgbRed   = (BYTE)(((DWORD)pPixel[i].rgbRed * a + 127) / 255);
+            pPixel[i].rgbGreen = (BYTE)(((DWORD)pPixel[i].rgbGreen * a + 127) / 255);
+            pPixel[i].rgbBlue  = (BYTE)(((DWORD)pPixel[i].rgbBlue * a + 127) / 255);
+        }
+    }
+}
+
+static bool IsLockScreenDesktopOverlay()
+{
+    HDESK hInput = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS);
+    if (!hInput) return false;
+    WCHAR deskName[64] = {0};
+    DWORD needed = 0;
+    BOOL ok = GetUserObjectInformationW(hInput, UOI_NAME, deskName, sizeof(deskName), &needed);
+    CloseDesktop(hInput);
+    return (ok && _wcsicmp(deskName, L"Winlogon") == 0);
+}
+
 FaceOverlay::FaceOverlay() :
     m_hwnd(NULL),
     m_hThread(NULL),
@@ -91,7 +124,7 @@ FaceOverlay::FaceOverlay() :
 
 FaceOverlay::~FaceOverlay()
 {
-    Hide();
+    Hide(true);
     DeleteCriticalSection(&m_cs);
     ReleaseGdiplus();
 }
@@ -113,6 +146,7 @@ void FaceOverlay::Show(const WCHAR* username, int scenario)
     StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Looking for you...");
     m_startTime = GetTickCount();
     m_verifiedTime = 0;
+    m_failedTime = 0;
     m_bPlayedWinkSound = false;
     m_spinProgress = 0.0f;
     m_winkProgress = 0.0f;
@@ -135,13 +169,19 @@ void FaceOverlay::SetState(OVERLAY_STATE state, const WCHAR* customText)
     {
         m_verifiedTime = GetTickCount();
         m_bPlayedWinkSound = false;
+        WCHAR formattedUser[128] = {0};
+        StringCchCopyW(formattedUser, ARRAYSIZE(formattedUser), m_username);
+        if (formattedUser[0] >= L'a' && formattedUser[0] <= L'z')
+        {
+            formattedUser[0] = formattedUser[0] - L'a' + L'A';
+        }
         if (customText)
         {
             StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), customText);
         }
         else
         {
-            StringCchPrintfW(m_statusText, ARRAYSIZE(m_statusText), L"Hello, %s", m_username);
+            StringCchPrintfW(m_statusText, ARRAYSIZE(m_statusText), L"Welcome, %s", formattedUser);
         }
         LogOverlay(L"State changed to OVERLAY_VERIFIED (%s)", m_statusText);
     }
@@ -154,9 +194,17 @@ void FaceOverlay::SetState(OVERLAY_STATE state, const WCHAR* customText)
     LeaveCriticalSection(&m_cs);
 }
 
-void FaceOverlay::Hide()
+void FaceOverlay::Hide(bool bForce)
 {
     EnterCriticalSection(&m_cs);
+    if (!bForce && IsLockScreenDesktopOverlay() && m_state != OVERLAY_VERIFIED)
+    {
+        LogOverlay(L"Hide requested but lock screen is still active; keeping overlay alive and scanning!");
+        m_state = OVERLAY_SCANNING;
+        m_fadeAlpha = 1.0f;
+        LeaveCriticalSection(&m_cs);
+        return;
+    }
     m_bRunning = FALSE;
     LeaveCriticalSection(&m_cs);
 
@@ -177,13 +225,33 @@ void FaceOverlay::Hide()
 DWORD WINAPI FaceOverlay::AnimationThread(LPVOID lpParam)
 {
     FaceOverlay* pThis = reinterpret_cast<FaceOverlay*>(lpParam);
+
+    HDESK hInputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
+    if (!hInputDesk)
+    {
+        hInputDesk = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_SWITCHDESKTOP | DESKTOP_HOOKCONTROL);
+    }
+    if (!hInputDesk)
+    {
+        hInputDesk = OpenDesktopW(L"Winlogon", 0, FALSE, GENERIC_ALL);
+    }
+    if (hInputDesk)
+    {
+        SetThreadDesktop(hInputDesk);
+    }
+
     pThis->RunAnimation();
+
+    if (hInputDesk)
+    {
+        CloseDesktop(hInputDesk);
+    }
     return 0;
 }
 
 void FaceOverlay::RunAnimation()
 {
-    LogOverlay(L"RunAnimation started");
+    LogOverlay(L"RunAnimation started (scenario=%d)", m_scenario);
 
     HINSTANCE hInst = g_hInst ? g_hInst : GetModuleHandleW(NULL);
     const WCHAR* className = L"WindowsHelloNativeOverlay";
@@ -196,12 +264,36 @@ void FaceOverlay::RunAnimation()
     wc.lpszClassName = className;
     RegisterClassExW(&wc);
 
-    HWND hwndSec = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
-    if (!hwndSec) hwndSec = FindWindowW(NULL, L"Windows Security");
-    if (!hwndSec) hwndSec = FindWindowW(L"Credential Dialog Xaml Host", NULL);
+    bool bLockDesk = IsLockScreenDesktopOverlay();
+    HWND hwndSec = NULL;
 
-    bool bIsCredUI = (m_scenario == CPUS_CREDUI || m_scenario == 3 || m_scenario == 4 ||
-                      (hwndSec != NULL && IsWindowVisible(hwndSec)));
+    // In CredUI or in-session dialogs, wait briefly for CredUI XAML Host to become visible
+    if (!bLockDesk || m_scenario == CPUS_CREDUI || (int)m_scenario == 3 || (int)m_scenario == 4)
+    {
+        for (int i = 0; i < 15; i++)
+        {
+            hwndSec = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
+            if (!hwndSec) hwndSec = FindWindowW(NULL, L"Windows Security");
+            if (!hwndSec) hwndSec = FindWindowW(L"Credential Dialog Xaml Host", NULL);
+            if (hwndSec && IsWindowVisible(hwndSec))
+            {
+                RECT rc = {0};
+                GetWindowRect(hwndSec, &rc);
+                int w = rc.right - rc.left;
+                int h = rc.bottom - rc.top;
+                if (w < 1000 && h < 800 && w > 100 && h > 100)
+                {
+                    break;
+                }
+                hwndSec = NULL;
+            }
+            Sleep(25);
+        }
+    }
+
+    bool bIsCredUI = (hwndSec != NULL && IsWindowVisible(hwndSec)) || !bLockDesk ||
+                     (m_scenario == CPUS_CREDUI || (int)m_scenario == 3);
+    bool bIsLockScreen = bLockDesk && !bIsCredUI;
 
     HMONITOR hMon = MonitorFromWindow(hwndSec ? hwndSec : GetDesktopWindow(), MONITOR_DEFAULTTOPRIMARY);
     MONITORINFO mi = { sizeof(mi) };
@@ -210,51 +302,99 @@ void FaceOverlay::RunAnimation()
     int monW = mi.rcWork.right - mi.rcWork.left;
     int monH = mi.rcWork.bottom - mi.rcWork.top;
 
-    int winW = 320;
-    int winH = 160;
+    int winW = 620;
+    int winH = 120;
     int posX = mi.rcWork.left + (monW - winW) / 2;
-    int posY = mi.rcWork.top + 45; // Default near top (lock screen under camera)
+    // Exactly directly above the clock digits "2:49" on Windows 11 lock screen
+    int posY = mi.rcWork.top + (int)(monH * 0.20);
 
     if (bIsCredUI)
     {
-        // In CredUI (Windows Security dialog), cover the entire PIN section (keypad icon, "Enter your PIN", and PIN box)
         RECT rc = {0};
         if (hwndSec && IsWindowVisible(hwndSec) && GetWindowRect(hwndSec, &rc))
         {
             int dlgW = rc.right - rc.left;
             int dlgH = rc.bottom - rc.top;
-
-            winW = dlgW - 32;
-            winH = dlgH - 125;
-            posX = rc.left + 16;
-            posY = rc.top + 98;
-            LogOverlay(L"CredUI dialog scenario: covering entire PIN card area (%d,%d %dx%d)", posX, posY, winW, winH);
+            winW = dlgW - 48;
+            winH = 140;
+            posX = rc.left + 24;
+            posY = rc.top + (int)(dlgH * 0.325);
+            LogOverlay(L"CredUI dialog scenario: embedded replacement overlay (%d,%d %dx%d)", posX, posY, winW, winH);
         }
         else
         {
             winW = 440;
-            winH = 260;
+            winH = 140;
             posX = mi.rcWork.left + (monW - winW) / 2;
             posY = mi.rcWork.top + (monH / 2) - 50;
         }
     }
 
-    m_hwnd = CreateWindowExW(
-        WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
-        className,
-        L"Windows Hello Overlay",
-        WS_POPUP,
-        posX, posY, winW, winH,
-        NULL, NULL, hInst, NULL
+    typedef HWND (WINAPI *pfnCreateWindowInBand)(
+        DWORD dwExStyle,
+        LPCWSTR lpClassName,
+        LPCWSTR lpWindowName,
+        DWORD dwStyle,
+        int X,
+        int Y,
+        int nWidth,
+        int nHeight,
+        HWND hWndParent,
+        HMENU hMenu,
+        HINSTANCE hInstance,
+        LPVOID lpParam,
+        DWORD dwBand
     );
 
+    HMODULE hUser32 = GetModuleHandleW(L"user32.dll");
+    pfnCreateWindowInBand pCreateWindowInBand = hUser32 ? (pfnCreateWindowInBand)GetProcAddress(hUser32, "CreateWindowInBand") : NULL;
+
+    DWORD dwExStyle = WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT;
+    DWORD dwStyle = WS_POPUP;
+
+    HWND hwndCreated = NULL;
+    if (pCreateWindowInBand && !bIsCredUI)
+    {
+        DWORD bands[] = { 16, 15, 14, 7, 6, 0 };
+        for (DWORD band : bands)
+        {
+            hwndCreated = pCreateWindowInBand(
+                dwExStyle,
+                className,
+                L"Windows Hello Overlay",
+                dwStyle,
+                posX, posY, winW, winH,
+                NULL, NULL, hInst, NULL,
+                band
+            );
+            if (hwndCreated)
+            {
+                LogOverlay(L"CreateWindowInBand (band=%lu) succeeded! HWND=%p at (%d,%d %dx%d)", band, hwndCreated, posX, posY, winW, winH);
+                break;
+            }
+        }
+    }
+
+    if (!hwndCreated)
+    {
+        hwndCreated = CreateWindowExW(
+            dwExStyle,
+            className,
+            L"Windows Hello Overlay",
+            dwStyle,
+            posX, posY, winW, winH,
+            NULL, NULL, hInst, NULL
+        );
+    }
+
+    m_hwnd = hwndCreated;
     if (!m_hwnd)
     {
-        LogOverlay(L"CreateWindowExW failed: %lu", GetLastError());
+        LogOverlay(L"Overlay window creation failed: %lu", GetLastError());
         m_bRunning = FALSE;
         return;
     }
-    LogOverlay(L"CreateWindowExW succeeded! HWND=%p at (%d,%d %dx%d)", m_hwnd, posX, posY, winW, winH);
+    LogOverlay(L"Overlay window created successfully! HWND=%p at (%d,%d %dx%d)", m_hwnd, posX, posY, winW, winH);
 
     HDC hdcScreen = GetDC(NULL);
     HDC hdcMem = CreateCompatibleDC(hdcScreen);
@@ -271,15 +411,6 @@ void FaceOverlay::RunAnimation()
     HBITMAP hBitmap = CreateDIBSection(hdcScreen, &bmi, DIB_RGB_COLORS, &pBits, NULL, 0);
     HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdcMem, hBitmap);
 
-    // Initial render before show
-    {
-        Gdiplus::Graphics g(hdcMem);
-        g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-        g.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
-        g.Clear(Gdiplus::Color(0, 0, 0, 0));
-        RenderFrame(g, winW, winH);
-    }
-
     POINT ptSrc = {0, 0};
     POINT ptDst = {posX, posY};
     SIZE sz = {winW, winH};
@@ -289,8 +420,16 @@ void FaceOverlay::RunAnimation()
     blend.SourceConstantAlpha = 255;
     blend.AlphaFormat = AC_SRC_ALPHA;
 
-    BOOL ulwRes = UpdateLayeredWindow(m_hwnd, hdcScreen, &ptDst, &sz, hdcMem, &ptSrc, 0, &blend, ULW_ALPHA);
-    LogOverlay(L"First UpdateLayeredWindow: %d, err=%lu", ulwRes, GetLastError());
+    // Initial render
+    {
+        Gdiplus::Graphics g(hdcMem);
+        g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        g.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
+        g.Clear(Gdiplus::Color(0, 0, 0, 0));
+        RenderFrame(g, winW, winH);
+    }
+    PremultiplyAlpha(pBits, winW * winH);
+    UpdateLayeredWindow(m_hwnd, hdcScreen, &ptDst, &sz, hdcMem, &ptSrc, 0, &blend, ULW_ALPHA);
 
     SetWindowPos(m_hwnd, HWND_TOPMOST, posX, posY, winW, winH, SWP_SHOWWINDOW | SWP_NOACTIVATE);
     ShowWindow(m_hwnd, SW_SHOWNOACTIVATE);
@@ -304,23 +443,34 @@ void FaceOverlay::RunAnimation()
             DispatchMessageW(&msg);
         }
 
-        // For CredUI dialog, ensure overlay follows dialog position if it appears or moves
+        // For CredUI dialog, ensure overlay follows dialog position if moved
         HWND hwndSecLoop = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
         if (!hwndSecLoop) hwndSecLoop = FindWindowW(NULL, L"Windows Security");
         if (!hwndSecLoop) hwndSecLoop = FindWindowW(L"Credential Dialog Xaml Host", NULL);
+        if (hwndSecLoop)
+        {
+            RECT rc = {0};
+            GetWindowRect(hwndSecLoop, &rc);
+            int w = rc.right - rc.left;
+            int h = rc.bottom - rc.top;
+            if (w >= 1000 || h >= 800)
+            {
+                hwndSecLoop = NULL;
+            }
+        }
 
-        bool bCredUILoop = (m_scenario == CPUS_CREDUI || m_scenario == 3 || m_scenario == 4 ||
-                            (hwndSecLoop != NULL && IsWindowVisible(hwndSecLoop)));
+        bool bCredUILoop = (hwndSecLoop != NULL && IsWindowVisible(hwndSecLoop)) || !bLockDesk ||
+                           (m_scenario == CPUS_CREDUI || (int)m_scenario == 3);
 
         if (bCredUILoop && hwndSecLoop && IsWindowVisible(hwndSecLoop))
         {
             RECT rcSec;
             if (GetWindowRect(hwndSecLoop, &rcSec))
             {
-                int cardCenterX = rcSec.left + (rcSec.right - rcSec.left) / 2;
-                int cardCenterY = rcSec.top + (rcSec.bottom - rcSec.top) / 2;
-                int targetX = cardCenterX - (winW / 2);
-                int targetY = cardCenterY - 126;
+                int dlgW = rcSec.right - rcSec.left;
+                int dlgH = rcSec.bottom - rcSec.top;
+                int targetX = rcSec.left + 24;
+                int targetY = rcSec.top + (int)(dlgH * 0.325);
                 if (targetX != posX || targetY != posY)
                 {
                     posX = targetX;
@@ -331,7 +481,6 @@ void FaceOverlay::RunAnimation()
             }
         }
 
-        // Maintain topmost Z-order at the anchored position
         SetWindowPos(m_hwnd, HWND_TOPMOST, posX, posY, winW, winH, SWP_NOACTIVATE | SWP_NOREDRAW);
 
         EnterCriticalSection(&m_cs);
@@ -342,11 +491,10 @@ void FaceOverlay::RunAnimation()
         if (curState == OVERLAY_VERIFIED && m_verifiedTime > 0)
         {
             DWORD elapsed = now - m_verifiedTime;
-            // Spin takes 0.6 seconds
-            if (elapsed < 600)
+            // 1. Spin into smiley face (0 to 500ms)
+            if (elapsed < 500)
             {
-                float t = (float)elapsed / 600.0f;
-                // EaseInOut cubic
+                float t = (float)elapsed / 500.0f;
                 m_spinProgress = (t < 0.5f) ? (4.0f * t * t * t) : (1.0f - std::pow(-2.0f * t + 2.0f, 3.0f) / 2.0f);
             }
             else
@@ -354,10 +502,10 @@ void FaceOverlay::RunAnimation()
                 m_spinProgress = 1.0f;
             }
 
-            // Wink occurs after spin finishes (at 750ms to 1050ms)
-            if (elapsed >= 750 && elapsed < 1050)
+            // 2. Wink right eye from 1050ms to 1350ms
+            if (elapsed >= 1050 && elapsed < 1350)
             {
-                float wt = (float)(elapsed - 750) / 300.0f;
+                float wt = (float)(elapsed - 1050) / 300.0f;
                 m_winkProgress = std::sin(wt * 3.14159265f);
 
                 if (!m_bPlayedWinkSound)
@@ -371,14 +519,17 @@ void FaceOverlay::RunAnimation()
                 m_winkProgress = 0.0f;
             }
 
-            // Fade out after 2.5 seconds
+            // 3. Fade out after 2.5s (only if desktop unlocked)
             if (elapsed > 2500)
             {
                 float ft = (float)(elapsed - 2500) / 400.0f;
                 if (ft >= 1.0f)
                 {
                     m_fadeAlpha = 0.0f;
-                    m_bRunning = FALSE;
+                    if (!bIsLockScreen)
+                    {
+                        m_bRunning = FALSE;
+                    }
                 }
                 else
                 {
@@ -389,14 +540,16 @@ void FaceOverlay::RunAnimation()
         else if (curState == OVERLAY_FAILED && m_failedTime > 0)
         {
             DWORD elapsed = now - m_failedTime;
-            // Display error for 2.0s then smoothly fade out over 400ms to reveal native PIN box
             if (elapsed > 2000)
             {
                 float ft = (float)(elapsed - 2000) / 400.0f;
                 if (ft >= 1.0f)
                 {
                     m_fadeAlpha = 0.0f;
-                    m_bRunning = FALSE;
+                    if (!bIsLockScreen)
+                    {
+                        m_bRunning = FALSE;
+                    }
                 }
                 else
                 {
@@ -411,10 +564,11 @@ void FaceOverlay::RunAnimation()
             Gdiplus::Graphics g(hdcMem);
             g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
             g.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
-            g.Clear(Gdiplus::Color(0, 0, 0, 0)); // Pure transparent background
+            g.Clear(Gdiplus::Color(0, 0, 0, 0));
 
             RenderFrame(g, winW, winH);
         }
+        PremultiplyAlpha(pBits, winW * winH);
 
         // Commit to screen with UpdateLayeredWindow
         blend.SourceConstantAlpha = (BYTE)(m_fadeAlpha * 255.0f);
@@ -438,13 +592,23 @@ void FaceOverlay::RunAnimation()
 
 void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
 {
-    bool bIsCredUI = (m_scenario == CPUS_CREDUI || m_scenario == 3 || m_scenario == 4 ||
-                      FindWindowW(L"Credential Dialog Xaml Host", NULL) != NULL ||
-                      FindWindowW(NULL, L"Windows Security") != NULL);
+    HWND hwndSecDlg = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
+    if (!hwndSecDlg) hwndSecDlg = FindWindowW(NULL, L"Windows Security");
+    if (!hwndSecDlg) hwndSecDlg = FindWindowW(L"Credential Dialog Xaml Host", NULL);
+    if (hwndSecDlg)
+    {
+        RECT rc = {0};
+        GetWindowRect(hwndSecDlg, &rc);
+        if (rc.right - rc.left >= 1000 || rc.bottom - rc.top >= 800) hwndSecDlg = NULL;
+    }
+    bool bLockDesk = IsLockScreenDesktopOverlay();
+    bool bIsCredUI = (hwndSecDlg != NULL && IsWindowVisible(hwndSecDlg)) || !bLockDesk ||
+                     (m_scenario == CPUS_CREDUI || (int)m_scenario == 3);
+    bool bIsLockScreen = bLockDesk && !bIsCredUI;
     bool bLightTheme = false;
 
     float cx = width / 2.0f;
-    float cy = bIsCredUI ? 52.0f : 44.0f;
+    float cy = bIsCredUI ? 44.0f : 50.0f;
 
     if (bIsCredUI)
     {
@@ -462,10 +626,9 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
             bLightTheme = true;
         }
 
-        // Draw solid card background to cleanly replace the 9-dots icon and "Enter your PIN"
-        Gdiplus::Color cardBg = bLightTheme ? Gdiplus::Color(255, 255, 255, 255) : Gdiplus::Color(255, 32, 32, 32);
-        Gdiplus::SolidBrush cardBgBrush(cardBg);
-        g.FillRectangle(&cardBgBrush, 0, 0, width, height);
+        // Completely mask the 3x3 blue dots PIN icon and "Enter your PIN"
+        Gdiplus::SolidBrush bgBrush(bLightTheme ? Gdiplus::Color(255, 255, 255, 255) : Gdiplus::Color(255, 32, 32, 32));
+        g.FillRectangle(&bgBrush, 0.0f, 0.0f, (float)width, (float)height);
     }
 
     Gdiplus::Color accentColor;
@@ -487,50 +650,79 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
 
     Gdiplus::SolidBrush accentBrush(accentColor);
     Gdiplus::SolidBrush textBrush(textColor);
-    Gdiplus::Pen accentPen(accentColor, bIsCredUI ? 4.5f : 5.5f);
+    Gdiplus::Pen accentPen(accentColor, bIsCredUI ? 4.5f : 4.5f);
     accentPen.SetStartCap(Gdiplus::LineCapRound);
     accentPen.SetEndCap(Gdiplus::LineCapRound);
 
-    Gdiplus::Pen shadowPen(shadowColor, bIsCredUI ? 4.5f : 5.5f);
+    Gdiplus::Pen shadowPen(shadowColor, bIsCredUI ? 4.5f : 4.5f);
     shadowPen.SetStartCap(Gdiplus::LineCapRound);
     shadowPen.SetEndCap(Gdiplus::LineCapRound);
     Gdiplus::SolidBrush shadowBrush(shadowColor);
 
-    float arcR = bIsCredUI ? 22.0f : 28.0f;
-    float eyeOffset = bIsCredUI ? 14.0f : 18.0f;
-    float eyeYOffset = bIsCredUI ? 8.0f : 10.0f;
+    float arcR = 22.0f;
+    float eyeOffset = 14.0f;
+    float eyeYOffset = 8.0f;
 
     if (m_state == OVERLAY_SCANNING)
     {
-        // ── SCANNING PHASE (Looking for you...) ──
+        // ── SCANNING PHASE (Dynamic gaze & natural eyelid blinking) ──
         DWORD now = GetTickCount();
         DWORD elapsed = now - m_startTime;
-        float gazeX = std::sin(elapsed * 0.0035f) * (bIsCredUI ? 5.0f : 6.5f); // Eyes scan left & right
+        float gazeX = std::sin(elapsed * 0.0035f) * (bIsCredUI ? 5.0f : 6.0f);
+
+        // Periodic eyelid blink every 2200ms lasting 240ms
+        DWORD blinkCycle = elapsed % 2200;
+        float blinkScale = 1.0f;
+        if (blinkCycle < 240)
+        {
+            float bt = (float)blinkCycle / 240.0f;
+            blinkScale = 1.0f - std::sin(bt * 3.14159265f) * 0.88f;
+        }
 
         // Top arc (shadow + accent)
+        float scaledArcH = arcR * 2.0f * blinkScale;
         if (!bLightTheme)
         {
-            Gdiplus::RectF arcShadow(cx - arcR, cy - arcR + 1.5f, arcR * 2.0f, arcR * 2.0f);
+            Gdiplus::RectF arcShadow(cx - arcR, cy - (scaledArcH / 2.0f) + 1.5f, arcR * 2.0f, scaledArcH);
             g.DrawArc(&shadowPen, arcShadow, 200.0f, 140.0f);
         }
 
-        Gdiplus::RectF arcRect(cx - arcR, cy - arcR, arcR * 2.0f, arcR * 2.0f);
+        Gdiplus::RectF arcRect(cx - arcR, cy - (scaledArcH / 2.0f), arcR * 2.0f, scaledArcH);
         g.DrawArc(&accentPen, arcRect, 200.0f, 140.0f);
 
-        // Center animated scanning eye
-        float rScan = bIsCredUI ? 11.0f : 14.0f;
+        // Center animated scanning eye / pupil
+        float rScan = bIsCredUI ? 11.0f : 12.0f;
+        float pupilH = rScan * 2.0f * blinkScale;
         if (!bLightTheme)
         {
-            g.FillEllipse(&shadowBrush, cx + gazeX - rScan, cy + 2.0f - rScan + 1.5f, rScan * 2.0f, rScan * 2.0f);
+            g.FillEllipse(&shadowBrush, cx + gazeX - rScan, cy + 2.0f - (pupilH / 2.0f) + 1.5f, rScan * 2.0f, pupilH);
         }
-        g.FillEllipse(&accentBrush, cx + gazeX - rScan, cy + 2.0f - rScan, rScan * 2.0f, rScan * 2.0f);
+        g.FillEllipse(&accentBrush, cx + gazeX - rScan, cy + 2.0f - (pupilH / 2.0f), rScan * 2.0f, pupilH);
+
+        // On Lock Screen: Keep clean look (no status text while scanning, matching Image 1)
+        // On CredUI: Display "Looking for you..."
+        if (bIsCredUI)
+        {
+            Gdiplus::FontFamily ff(L"Segoe UI");
+            Gdiplus::Font font(&ff, 12.0f, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
+            Gdiplus::StringFormat sf;
+            sf.SetAlignment(Gdiplus::StringAlignmentCenter);
+            sf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+
+            if (!bLightTheme)
+            {
+                Gdiplus::RectF ts(0.0f, 83.5f, (float)width, 34.0f);
+                g.DrawString(m_statusText, -1, &font, ts, &sf, &shadowBrush);
+            }
+            Gdiplus::RectF tr(0.0f, 82.0f, (float)width, 34.0f);
+            g.DrawString(m_statusText, -1, &font, tr, &sf, &textBrush);
+        }
     }
     else if (m_state == OVERLAY_VERIFIED)
     {
-        // ── VERIFIED PHASE (Spin 900 deg into smile + wink) ──
+        // ── VERIFIED PHASE (Smile spin + happy eyes + wink) ──
         float angle = 180.0f + m_spinProgress * 900.0f;
 
-        // Rotated smile arc
         Gdiplus::Matrix mat;
         mat.RotateAt(angle, Gdiplus::PointF(cx, cy));
         g.SetTransform(&mat);
@@ -552,7 +744,7 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
             BYTE gCol = accentColor.GetG();
             BYTE b = accentColor.GetB();
             Gdiplus::SolidBrush fadeEyeBrush(Gdiplus::Color((BYTE)eyeAlpha, r, gCol, b));
-            float rScan = (bIsCredUI ? 11.0f : 14.0f) * (1.0f - m_spinProgress / 0.4f);
+            float rScan = (bIsCredUI ? 11.0f : 12.0f) * (1.0f - m_spinProgress / 0.4f);
             g.FillEllipse(&fadeEyeBrush, cx - rScan, cy + 2.0f - rScan, rScan * 2.0f, rScan * 2.0f);
         }
 
@@ -560,7 +752,7 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
         if (m_spinProgress > 0.6f)
         {
             float pop = (m_spinProgress - 0.6f) / 0.4f;
-            float eyeR = (bIsCredUI ? 4.8f : 6.0f) * pop;
+            float eyeR = 4.5f * pop;
 
             // Left eye
             if (!bLightTheme)
@@ -572,7 +764,7 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
             // Right eye (winks)
             if (m_winkProgress > 0.01f)
             {
-                float winkHeight = eyeR * 2.0f * (1.0f - m_winkProgress * 0.85f);
+                float winkHeight = eyeR * 2.0f * (1.0f - m_winkProgress * 0.90f);
                 if (winkHeight < 2.0f) winkHeight = 2.0f;
                 if (!bLightTheme)
                 {
@@ -589,6 +781,25 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
                 g.FillEllipse(&accentBrush, cx + eyeOffset - eyeR, cy - eyeYOffset - eyeR, eyeR * 2.0f, eyeR * 2.0f);
             }
         }
+
+        // Status text below the face
+        Gdiplus::FontFamily fontFamily(L"Segoe UI");
+        Gdiplus::Font font(&fontFamily, bIsCredUI ? 12.0f : 11.5f, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
+        Gdiplus::StringFormat format;
+        format.SetAlignment(Gdiplus::StringAlignmentCenter);
+        format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+
+        float textY = bIsCredUI ? 82.0f : 78.0f;
+        float textH = 34.0f;
+
+        if (!bLightTheme)
+        {
+            Gdiplus::RectF textShadowRect(0.0f, textY + 1.5f, (float)width, textH);
+            g.DrawString(m_statusText, -1, &font, textShadowRect, &format, &shadowBrush);
+        }
+
+        Gdiplus::RectF textRect(0.0f, textY, (float)width, textH);
+        g.DrawString(m_statusText, -1, &font, textRect, &format, &textBrush);
     }
     else if (m_state == OVERLAY_FAILED)
     {
@@ -603,24 +814,23 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
         // Neutral eyes
         g.FillEllipse(&dimBrush, cx - 13.0f - 3.5f, cy - 7.0f - 3.5f, 7.0f, 7.0f);
         g.FillEllipse(&dimBrush, cx + 13.0f - 3.5f, cy - 7.0f - 3.5f, 7.0f, 7.0f);
+
+        // Status text
+        Gdiplus::FontFamily fontFamily(L"Segoe UI");
+        Gdiplus::Font font(&fontFamily, bIsCredUI ? 11.5f : 11.0f, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
+        Gdiplus::StringFormat format;
+        format.SetAlignment(Gdiplus::StringAlignmentCenter);
+        format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+
+        float textY = bIsCredUI ? 82.0f : 78.0f;
+        float textH = 32.0f;
+
+        if (!bLightTheme)
+        {
+            Gdiplus::RectF textShadowRect(0.0f, textY + 1.5f, (float)width, textH);
+            g.DrawString(m_statusText, -1, &font, textShadowRect, &format, &shadowBrush);
+        }
+        Gdiplus::RectF textRect(0.0f, textY, (float)width, textH);
+        g.DrawString(m_statusText, -1, &font, textRect, &format, &textBrush);
     }
-
-    // ── Status / Welcome Text ──
-    Gdiplus::FontFamily fontFamily(L"Segoe UI");
-    Gdiplus::Font font(&fontFamily, bIsCredUI ? 11.0f : 12.0f, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
-    Gdiplus::StringFormat format;
-    format.SetAlignment(Gdiplus::StringAlignmentCenter);
-    format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
-
-    float textY = bIsCredUI ? 102.0f : 91.0f;
-
-    if (!bLightTheme)
-    {
-        Gdiplus::RectF textShadowRect(0.0f, textY + 1.5f, (float)width, 36.0f);
-        Gdiplus::SolidBrush textShadowBrush(Gdiplus::Color(140, 0, 0, 0));
-        g.DrawString(m_statusText, -1, &font, textShadowRect, &format, &textShadowBrush);
-    }
-
-    Gdiplus::RectF textRect(0.0f, textY, (float)width, 36.0f);
-    g.DrawString(m_statusText, -1, &font, textRect, &format, &textBrush);
 }

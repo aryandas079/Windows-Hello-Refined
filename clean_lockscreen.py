@@ -71,8 +71,8 @@ def clean_lock_screen():
     # 1. ContentDeliveryManager: Suggestions, Tips, Spotlight text overlays
     cdm_key = r"Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
     tweaks_cdm = [
-        ("RotatingLockScreenEnabled", 0, "Spotlight Auto-Rotation Overlays"),
-        ("RotatingLockScreenOverlayEnabled", 0, "Spotlight Fun Facts & Overlays"),
+        ("RotatingLockScreenEnabled", 1, "Spotlight Wallpaper Rotation"),
+        ("RotatingLockScreenOverlayEnabled", 0, "Spotlight Fun Facts & Trivia"),
         ("SubscribedContent-338387Enabled", 0, "Tips, Tricks, and Suggestions"),
         ("SubscribedContent-338388Enabled", 0, "Spotlight Recommendations"),
         ("SubscribedContent-338389Enabled", 0, "Edge / Lock Screen Prompts"),
@@ -86,7 +86,7 @@ def clean_lock_screen():
         ("SubscribedContent-353698Enabled", 0, "Lock Screen Creative Overlays"),
         ("SoftLandingEnabled", 0, "Welcome Experience & Tips"),
         ("SystemPaneSuggestionsEnabled", 0, "Lock Screen System Suggestions"),
-        ("ContentDeliveryAllowed", 0, "Background Content Delivery"),
+        ("ContentDeliveryAllowed", 1, "Background Content Delivery"),
         ("FeatureManagementEnabled", 0, "Promotional Feature Delivery")
     ]
 
@@ -118,33 +118,25 @@ def clean_lock_screen():
     set_reg_value(winreg.HKEY_CURRENT_USER, feed_key, "LockScreenFeedEnabled", 0)
     print("  [DONE] Disable Lock Screen Feeds (LSWE)")
 
-    # 4. HKCU Policies: CloudContent
-    hkcu_policy_cloud = r"Software\Policies\Microsoft\Windows\CloudContent"
-    set_reg_value(winreg.HKEY_CURRENT_USER, hkcu_policy_cloud, "DisableWindowsSpotlightFeatures", 1)
-    set_reg_value(winreg.HKEY_CURRENT_USER, hkcu_policy_cloud, "DisableSoftLanding", 1)
-    set_reg_value(winreg.HKEY_CURRENT_USER, hkcu_policy_cloud, "DisableThirdPartySuggestions", 1)
-    set_reg_value(winreg.HKEY_CURRENT_USER, hkcu_policy_cloud, "ConfigureWindowsSpotlight", 2)
-    print("  [DONE] Enforce User CloudContent Policies")
+    # 4. Remove all Spotlight and Wallpaper blocking policies to allow full settings access
+    delete_reg_value(winreg.HKEY_CURRENT_USER, r"Software\Policies\Microsoft\Windows\CloudContent", "DisableWindowsSpotlightFeatures")
+    delete_reg_value(winreg.HKEY_CURRENT_USER, r"Software\Policies\Microsoft\Windows\CloudContent", "ConfigureWindowsSpotlight")
+    delete_reg_value(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Policies\Microsoft\Windows\CloudContent", "DisableWindowsSpotlightFeatures")
+    delete_reg_value(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Policies\Microsoft\Windows\CloudContent", "ConfigureWindowsSpotlight")
+    delete_reg_value(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Policies\Microsoft\Windows\CloudContent", "DisableWindowsConsumerFeatures")
+    delete_reg_value(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Policies\Microsoft\Windows\Personalization", "NoLockScreen")
+    delete_reg_value(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Policies\Microsoft\Windows\Personalization", "NoLockScreenSlideshow")
+    delete_reg_value(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Policies\Microsoft\Windows\Personalization", "NoLockScreenCamera")
+    print("  [DONE] Unlocked Lock Screen Wallpaper and Windows Spotlight in Settings")
 
-    # 5. HKLM Policies: Windows 11 24H2 Widgets Policy (PersonalizationCSP & Dsh)
+    # 5. HKLM Policies: Windows 11 24H2 MSN Widgets Policy (PersonalizationCSP & Dsh)
     set_reg_value(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Policies\Microsoft\Dsh", "DisableWidgetsOnLockScreen", 1)
     set_reg_value(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP", "LockScreenWidgetsEnabled", 0)
     print("  [DONE] Enforce Machine Widgets Policies (Dsh & PersonalizationCSP)")
 
-    # 6. HKLM CloudContent Policies (Machine level)
-    hklm_cloud = r"SOFTWARE\Policies\Microsoft\Windows\CloudContent"
-    set_reg_value(winreg.HKEY_LOCAL_MACHINE, hklm_cloud, "DisableWindowsSpotlightFeatures", 1)
-    set_reg_value(winreg.HKEY_LOCAL_MACHINE, hklm_cloud, "DisableSoftLanding", 1)
-    set_reg_value(winreg.HKEY_LOCAL_MACHINE, hklm_cloud, "DisableWindowsConsumerFeatures", 1)
-    set_reg_value(winreg.HKEY_LOCAL_MACHINE, hklm_cloud, "DisableThirdPartySuggestions", 1)
-    set_reg_value(winreg.HKEY_LOCAL_MACHINE, hklm_cloud, "ConfigureWindowsSpotlight", 2)
-    print("  [DONE] Enforce Machine CloudContent Policies")
-
-    # 7. HKLM Personalization Policies
-    hklm_pers = r"SOFTWARE\Policies\Microsoft\Windows\Personalization"
-    set_reg_value(winreg.HKEY_LOCAL_MACHINE, hklm_pers, "NoLockScreenCamera", 1)
-    set_reg_value(winreg.HKEY_LOCAL_MACHINE, hklm_pers, "NoLockScreenSlideshow", 1)
-    print("  [DONE] Disable Lock Screen Camera Prompts & Overlays")
+    # 6. Ensure Windows Spotlight background rotation is permitted in ContentDeliveryManager
+    set_reg_value(winreg.HKEY_CURRENT_USER, cdm_key, "RotatingLockScreenEnabled", 1)
+    set_reg_value(winreg.HKEY_CURRENT_USER, cdm_key, "ContentDeliveryAllowed", 1)
 
     # 8. Clear cached Spotlight suggestions and trivia
     clear_spotlight_cache()

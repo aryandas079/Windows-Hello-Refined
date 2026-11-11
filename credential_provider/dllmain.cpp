@@ -78,18 +78,67 @@ private:
     long m_cRef;
 };
 
-static void EnsureNoLockScreenPolicy()
+static void CleanAllLockScreenPolicies()
 {
-    // Ensure Windows skips the sliding lock screen curtain so Windows Hello
-    // is always immediately active and visible whenever the device wakes from sleep.
-    HKEY hKey = NULL;
-    if (RegCreateKeyExW(HKEY_LOCAL_MACHINE,
-                        L"SOFTWARE\\Policies\\Microsoft\\Windows\\Personalization",
-                        0, NULL, REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL, &hKey, NULL) == ERROR_SUCCESS)
+    // 1. Remove lock screen and slideshow blocking policies in HKLM Personalization
+    HKEY hPers = NULL;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Policies\\Microsoft\\Windows\\Personalization", 0, KEY_SET_VALUE, &hPers) == ERROR_SUCCESS)
     {
-        DWORD val = 1;
-        RegSetValueExW(hKey, L"NoLockScreen", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
-        RegCloseKey(hKey);
+        RegDeleteValueW(hPers, L"NoLockScreen");
+        RegDeleteValueW(hPers, L"NoLockScreenSlideshow");
+        RegDeleteValueW(hPers, L"NoLockScreenCamera");
+        RegCloseKey(hPers);
+    }
+
+    // 2. Remove Windows Spotlight blocking policies in HKLM CloudContent
+    HKEY hCloud = NULL;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent", 0, KEY_SET_VALUE, &hCloud) == ERROR_SUCCESS)
+    {
+        RegDeleteValueW(hCloud, L"DisableWindowsSpotlightFeatures");
+        RegDeleteValueW(hCloud, L"ConfigureWindowsSpotlight");
+        RegDeleteValueW(hCloud, L"DisableWindowsConsumerFeatures");
+        RegDeleteValueW(hCloud, L"DisableSoftLanding");
+        RegDeleteValueW(hCloud, L"DisableThirdPartySuggestions");
+        RegCloseKey(hCloud);
+    }
+
+    // 3. Clean user hives in HKEY_USERS
+    HKEY hUsers = NULL;
+    if (RegOpenKeyExW(HKEY_USERS, NULL, 0, KEY_READ, &hUsers) == ERROR_SUCCESS)
+    {
+        WCHAR subkeyName[256];
+        DWORD idx = 0;
+        DWORD nameLen = ARRAYSIZE(subkeyName);
+        while (RegEnumKeyExW(hUsers, idx++, subkeyName, &nameLen, NULL, NULL, NULL, NULL) == ERROR_SUCCESS)
+        {
+            if (wcsstr(subkeyName, L"_Classes") == NULL)
+            {
+                WCHAR userCloudPath[512];
+                StringCchPrintfW(userCloudPath, ARRAYSIZE(userCloudPath), L"%s\\Software\\Policies\\Microsoft\\Windows\\CloudContent", subkeyName);
+                HKEY hUserCloud = NULL;
+                if (RegOpenKeyExW(HKEY_USERS, userCloudPath, 0, KEY_SET_VALUE, &hUserCloud) == ERROR_SUCCESS)
+                {
+                    RegDeleteValueW(hUserCloud, L"DisableWindowsSpotlightFeatures");
+                    RegDeleteValueW(hUserCloud, L"ConfigureWindowsSpotlight");
+                    RegDeleteValueW(hUserCloud, L"DisableSoftLanding");
+                    RegDeleteValueW(hUserCloud, L"DisableThirdPartySuggestions");
+                    RegCloseKey(hUserCloud);
+                }
+
+                WCHAR userCdmPath[512];
+                StringCchPrintfW(userCdmPath, ARRAYSIZE(userCdmPath), L"%s\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager", subkeyName);
+                HKEY hUserCdm = NULL;
+                if (RegOpenKeyExW(HKEY_USERS, userCdmPath, 0, KEY_SET_VALUE, &hUserCdm) == ERROR_SUCCESS)
+                {
+                    DWORD one = 1;
+                    RegSetValueExW(hUserCdm, L"RotatingLockScreenEnabled", 0, REG_DWORD, (const BYTE*)&one, sizeof(one));
+                    RegSetValueExW(hUserCdm, L"ContentDeliveryAllowed", 0, REG_DWORD, (const BYTE*)&one, sizeof(one));
+                    RegCloseKey(hUserCdm);
+                }
+            }
+            nameLen = ARRAYSIZE(subkeyName);
+        }
+        RegCloseKey(hUsers);
     }
 }
 
@@ -99,7 +148,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
     {
         g_hInst = hinstDLL;
         DisableThreadLibraryCalls(hinstDLL);
-        EnsureNoLockScreenPolicy();
+        CleanAllLockScreenPolicies();
     }
     return TRUE;
 }
