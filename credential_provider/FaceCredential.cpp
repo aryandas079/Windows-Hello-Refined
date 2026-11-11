@@ -19,7 +19,7 @@ static void LogMsg(const WCHAR* fmt, ...)
     StringCchVPrintfW(buf, ARRAYSIZE(buf), fmt, va);
     va_end(va);
 
-    FILE* f = _wfopen(L"C:\\Windows\\Temp\\WindowsHelloRefined.log", L"a, ccs=UTF-8");
+    FILE* f = _wfopen(L"C:\\Users\\Public\\WindowsHelloRefined.log", L"a, ccs=UTF-8");
     if (f)
     {
         SYSTEMTIME st;
@@ -205,6 +205,10 @@ HRESULT FaceCredential::QueryInterface(REFIID riid, void** ppv)
     {
         *ppv = static_cast<ICredentialProviderCredential2*>(this);
     }
+    else if (riid == IID_ICredentialProviderCredential3)
+    {
+        *ppv = static_cast<ICredentialProviderCredential3*>(this);
+    }
     else
     {
         *ppv = nullptr;
@@ -287,7 +291,7 @@ static HBITMAP CreatePARGBDIB(int width, int height, void** ppvBits)
     BITMAPINFO bmi = {0};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     bmi.bmiHeader.biWidth = width;
-    bmi.bmiHeader.biHeight = -height; // Top-down DIB
+    bmi.bmiHeader.biHeight = height; // Bottom-up standard DIB (positive height)
     bmi.bmiHeader.biPlanes = 1;
     bmi.bmiHeader.biBitCount = 32;
     bmi.bmiHeader.biCompression = BI_RGB;
@@ -295,12 +299,112 @@ static HBITMAP CreatePARGBDIB(int width, int height, void** ppvBits)
     return CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, ppvBits, NULL, 0);
 }
 
+static HRESULT GetAssetBitmapBuffer(LPCWSTR filename, DWORD* pImageBufferSize, BYTE** ppImageBuffer)
+{
+    if (!pImageBufferSize || !ppImageBuffer) return E_POINTER;
+    *pImageBufferSize = 0;
+    *ppImageBuffer = nullptr;
+
+    const int iconSize = 96;
+    WCHAR pngName[64];
+    StringCchCopyW(pngName, ARRAYSIZE(pngName), filename);
+    WCHAR* dot = wcsrchr(pngName, L'.');
+    if (dot) StringCchCopyW(dot, 5, L".png");
+
+    WCHAR assetPath[MAX_PATH] = {0};
+    GetModuleFileNameW(g_hInst, assetPath, ARRAYSIZE(assetPath));
+    PathRemoveFileSpecW(assetPath);
+    PathAppendW(assetPath, L"..\\assets");
+    PathAppendW(assetPath, pngName);
+
+    LogMsg(L"GetAssetBitmapBuffer: loading %s", assetPath);
+
+    Gdiplus::Bitmap* pBmp = Gdiplus::Bitmap::FromFile(assetPath);
+    if (!pBmp || pBmp->GetLastStatus() != Gdiplus::Ok)
+    {
+        if (pBmp) delete pBmp;
+        PathRemoveFileSpecW(assetPath);
+        PathAppendW(assetPath, filename);
+        pBmp = Gdiplus::Bitmap::FromFile(assetPath);
+    }
+
+    int w = iconSize;
+    int h = iconSize;
+    Gdiplus::Bitmap* pTargetBmp = nullptr;
+
+    if (pBmp && pBmp->GetLastStatus() == Gdiplus::Ok)
+    {
+        w = pBmp->GetWidth();
+        h = pBmp->GetHeight();
+        pTargetBmp = pBmp;
+    }
+    else
+    {
+        pTargetBmp = new Gdiplus::Bitmap(w, h, PixelFormat32bppPARGB);
+        Gdiplus::Graphics g(pTargetBmp);
+        g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        g.Clear(Gdiplus::Color(0, 0, 0, 0));
+
+        Gdiplus::Color white(255, 255, 255, 255);
+        Gdiplus::SolidBrush whiteBrush(white);
+        Gdiplus::Pen whitePen(white, 6.0f);
+        whitePen.SetStartCap(Gdiplus::LineCapRound);
+        whitePen.SetEndCap(Gdiplus::LineCapRound);
+
+        g.DrawArc(&whitePen, 18.0f, 16.0f, 60.0f, 60.0f, 25.0f, 130.0f);
+        g.FillEllipse(&whiteBrush, 32.0f, 34.0f, 10.0f, 10.0f);
+        if (wcsstr(filename, L"wink"))
+            g.DrawLine(&whitePen, 54.0f, 39.0f, 68.0f, 39.0f);
+        else
+            g.FillEllipse(&whiteBrush, 54.0f, 34.0f, 10.0f, 10.0f);
+    }
+
+    DWORD dwBmpSize = w * h * 4;
+    DWORD dwcbFullSize = sizeof(BITMAPINFOHEADER) + dwBmpSize;
+    BYTE* pBuffer = (BYTE*)CoTaskMemAlloc(dwcbFullSize);
+    if (!pBuffer)
+    {
+        if (pTargetBmp) delete pTargetBmp;
+        return E_OUTOFMEMORY;
+    }
+
+    ZeroMemory(pBuffer, dwcbFullSize);
+    BITMAPINFO* pBmi = (BITMAPINFO*)pBuffer;
+    pBmi->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    pBmi->bmiHeader.biWidth = w;
+    pBmi->bmiHeader.biHeight = h; // Bottom-up standard DIB
+    pBmi->bmiHeader.biPlanes = 1;
+    pBmi->bmiHeader.biBitCount = 32;
+    pBmi->bmiHeader.biCompression = BI_RGB;
+
+    BYTE* pDstPixels = pBuffer + sizeof(BITMAPINFOHEADER);
+    Gdiplus::BitmapData bmpData;
+    Gdiplus::Rect rect(0, 0, w, h);
+
+    if (pTargetBmp->LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppPARGB, &bmpData) == Gdiplus::Ok)
+    {
+        for (int y = 0; y < h; y++)
+        {
+            BYTE* pSrcRow = (BYTE*)bmpData.Scan0 + (y * bmpData.Stride);
+            BYTE* pDstRow = pDstPixels + ((h - 1 - y) * (w * 4));
+            memcpy(pDstRow, pSrcRow, w * 4);
+        }
+        pTargetBmp->UnlockBits(&bmpData);
+    }
+
+    delete pTargetBmp;
+
+    *pImageBufferSize = dwcbFullSize;
+    *ppImageBuffer = pBuffer;
+    LogMsg(L"GetAssetBitmapBuffer: successfully created %dx%d PARGB buffer (%d bytes)", w, h, dwcbFullSize);
+    return S_OK;
+}
+
 static HBITMAP LoadAssetBitmap(LPCWSTR filename)
 {
     const int iconSize = 128;
     WCHAR pngName[64];
     StringCchCopyW(pngName, ARRAYSIZE(pngName), filename);
-    // Replace .bmp extension with .png for high-fidelity alpha
     WCHAR* dot = wcsrchr(pngName, L'.');
     if (dot) StringCchCopyW(dot, 5, L".png");
 
@@ -315,7 +419,6 @@ static HBITMAP LoadAssetBitmap(LPCWSTR filename)
     Gdiplus::Bitmap* pBmp = Gdiplus::Bitmap::FromFile(assetPath);
     if (!pBmp || pBmp->GetLastStatus() != Gdiplus::Ok)
     {
-        // Try original filename (.bmp) if .png was not found
         if (pBmp) delete pBmp;
         PathRemoveFileSpecW(assetPath);
         PathAppendW(assetPath, filename);
@@ -332,10 +435,15 @@ static HBITMAP LoadAssetBitmap(LPCWSTR filename)
         {
             Gdiplus::BitmapData bmpData;
             Gdiplus::Rect rect(0, 0, w, h);
-            // PixelFormat32bppPARGB preserves true 100% transparent alpha (alpha = 0)
             if (pBmp->LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppPARGB, &bmpData) == Gdiplus::Ok)
             {
-                memcpy(pBits, bmpData.Scan0, w * h * 4);
+                // Bottom-up DIB row copy
+                for (int y = 0; y < h; y++)
+                {
+                    BYTE* pSrcRow = (BYTE*)bmpData.Scan0 + (y * bmpData.Stride);
+                    BYTE* pDstRow = (BYTE*)pBits + ((h - 1 - y) * (w * 4));
+                    memcpy(pDstRow, pSrcRow, w * 4);
+                }
                 pBmp->UnlockBits(&bmpData);
                 delete pBmp;
                 LogMsg(L"LoadAssetBitmap: successfully loaded 32-bit PARGB transparent bitmap: %s", pngName);
@@ -385,7 +493,12 @@ static HBITMAP LoadAssetBitmap(LPCWSTR filename)
         Gdiplus::Rect rect(0, 0, iconSize, iconSize);
         if (memBmp.LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppPARGB, &bmpData) == Gdiplus::Ok)
         {
-            memcpy(pBits, bmpData.Scan0, iconSize * iconSize * 4);
+            for (int y = 0; y < iconSize; y++)
+            {
+                BYTE* pSrcRow = (BYTE*)bmpData.Scan0 + (y * bmpData.Stride);
+                BYTE* pDstRow = (BYTE*)pBits + ((iconSize - 1 - y) * (iconSize * 4));
+                memcpy(pDstRow, pSrcRow, iconSize * 4);
+            }
             memBmp.UnlockBits(&bmpData);
             LogMsg(L"LoadAssetBitmap: in-memory transparent vector bitmap ready.");
             return hDIB;
@@ -584,6 +697,7 @@ HRESULT FaceCredential::GetStringValue(DWORD dwFieldID, LPWSTR* ppsz)
 
 HRESULT FaceCredential::GetBitmapValue(DWORD dwFieldID, HBITMAP* phbmp)
 {
+    LogMsg(L"FaceCredential::GetBitmapValue called for fieldID=%d", dwFieldID);
     if (!phbmp) return E_POINTER;
     *phbmp = NULL;
 
@@ -593,6 +707,20 @@ HRESULT FaceCredential::GetBitmapValue(DWORD dwFieldID, HBITMAP* phbmp)
         return S_OK;
     }
     return S_OK;
+}
+
+HRESULT FaceCredential::GetBitmapBufferValue(DWORD dwFieldID, DWORD* pImageBufferSize, BYTE** ppImageBuffer)
+{
+    LogMsg(L"FaceCredential::GetBitmapBufferValue called for fieldID=%d", dwFieldID);
+    if (!pImageBufferSize || !ppImageBuffer) return E_POINTER;
+    *pImageBufferSize = 0;
+    *ppImageBuffer = nullptr;
+
+    if (dwFieldID == FPF_LOGO)
+    {
+        return GetAssetBitmapBuffer(m_bVerified ? L"hello_wink.bmp" : L"hello_normal.bmp", pImageBufferSize, ppImageBuffer);
+    }
+    return E_INVALIDARG;
 }
 
 HRESULT FaceCredential::GetCheckboxValue(DWORD dwFieldID, BOOL* pbChecked, LPWSTR* ppszLabel)

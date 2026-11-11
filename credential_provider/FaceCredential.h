@@ -5,7 +5,7 @@
 
 class FaceCredentialProvider;
 
-class FaceCredential : public ICredentialProviderCredential2
+class FaceCredential : public ICredentialProviderCredential3
 {
 public:
     FaceCredential();
@@ -42,6 +42,9 @@ public:
 
     // ICredentialProviderCredential2
     IFACEMETHODIMP GetUserSid(LPWSTR* ppszSid);
+
+    // ICredentialProviderCredential3 (Modern Windows 10/11 Direct Bitmap Buffer)
+    IFACEMETHODIMP GetBitmapBufferValue(DWORD dwFieldID, DWORD* pImageBufferSize, BYTE** ppImageBuffer);
 
     void Initialize(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, FaceCredentialProvider* pProvider, LPCWSTR pszUserSid);
 

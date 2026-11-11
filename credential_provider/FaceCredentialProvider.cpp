@@ -11,7 +11,7 @@ static void LogProvider(const WCHAR* fmt, ...)
     StringCchVPrintfW(buf, ARRAYSIZE(buf), fmt, va);
     va_end(va);
 
-    FILE* f = _wfopen(L"C:\\Windows\\Temp\\WindowsHelloRefined.log", L"a, ccs=UTF-8");
+    FILE* f = _wfopen(L"C:\\Users\\Public\\WindowsHelloRefined.log", L"a, ccs=UTF-8");
     if (f)
     {
         SYSTEMTIME st;
@@ -23,9 +23,9 @@ static void LogProvider(const WCHAR* fmt, ...)
 
 static const CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR s_rgFieldDescriptors[] =
 {
-    { FPF_LOGO,           CPFT_TILE_IMAGE,    const_cast<LPWSTR>(L"Windows Hello Face") },
-    { FPF_STATUS_TEXT,    CPFT_LARGE_TEXT,    const_cast<LPWSTR>(L"Windows Hello") },
-    { FPF_SUBMIT_BUTTON,  CPFT_SUBMIT_BUTTON, const_cast<LPWSTR>(L"Unlock") }
+    { FPF_LOGO,           CPFT_TILE_IMAGE,    const_cast<LPWSTR>(L"Windows Hello Face"), CPFG_CREDENTIAL_PROVIDER_LOGO },
+    { FPF_STATUS_TEXT,    CPFT_LARGE_TEXT,    const_cast<LPWSTR>(L"Windows Hello"),      GUID_NULL },
+    { FPF_SUBMIT_BUTTON,  CPFT_SUBMIT_BUTTON, const_cast<LPWSTR>(L"Unlock"),             GUID_NULL }
 };
 
 FaceCredentialProvider::FaceCredentialProvider() :
@@ -197,6 +197,7 @@ HRESULT FaceCredentialProvider::GetFieldDescriptorAt(DWORD dwIndex, CREDENTIAL_P
 
     pcpfd->dwFieldID = s_rgFieldDescriptors[dwIndex].dwFieldID;
     pcpfd->cpft = s_rgFieldDescriptors[dwIndex].cpft;
+    pcpfd->guidFieldType = s_rgFieldDescriptors[dwIndex].guidFieldType;
     HRESULT hr = SHStrDupW(s_rgFieldDescriptors[dwIndex].pszLabel, &pcpfd->pszLabel);
     if (FAILED(hr))
     {
