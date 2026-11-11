@@ -579,60 +579,31 @@ static void ExtractJsonString(const char* json, const char* key, WCHAR* outBuf, 
     MultiByteToWideChar(CP_UTF8, 0, val, -1, outBuf, maxChars);
 }
 
-static void SimulatePinInput(LPCWSTR pszPin)
+static void SendKey(WORD vk, bool bExtended = false)
 {
-    if (!pszPin || wcslen(pszPin) == 0) return;
+    INPUT inputs[2] = {0};
+    inputs[0].type = INPUT_KEYBOARD;
+    inputs[0].ki.wVk = vk;
+    inputs[0].ki.wScan = (WORD)MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
+    inputs[0].ki.dwFlags = bExtended ? KEYEVENTF_EXTENDEDKEY : 0;
 
-    LogMsg(L"SimulatePinInput: starting simulation for %d characters...", (int)wcslen(pszPin));
+    inputs[1].type = INPUT_KEYBOARD;
+    inputs[1].ki.wVk = vk;
+    inputs[1].ki.wScan = inputs[0].ki.wScan;
+    inputs[1].ki.dwFlags = (bExtended ? KEYEVENTF_EXTENDEDKEY : 0) | KEYEVENTF_KEYUP;
 
-    HDESK hInputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
-    if (hInputDesk)
+    SendInput(1, &inputs[0], sizeof(INPUT));
+    Sleep(6);
+    SendInput(1, &inputs[1], sizeof(INPUT));
+    Sleep(6);
+}
+
+static void SendCharKey(WCHAR ch)
+{
+    SHORT vkState = VkKeyScanW(ch);
+    if (vkState == -1)
     {
-        SetThreadDesktop(hInputDesk);
-        LogMsg(L"SimulatePinInput: attached to input desktop.");
-    }
-
-    // Step 1: Send Spacebar + Extended Up Arrow to slide up the lock screen curtain upon successful verification
-    LogMsg(L"SimulatePinInput: sending Spacebar + Extended Up to slide up curtain...");
-    INPUT wake[4] = {0};
-    wake[0].type = INPUT_KEYBOARD;
-    wake[0].ki.wVk = VK_SPACE;
-    wake[1].type = INPUT_KEYBOARD;
-    wake[1].ki.wVk = VK_SPACE;
-    wake[1].ki.dwFlags = KEYEVENTF_KEYUP;
-
-    wake[2].type = INPUT_KEYBOARD;
-    wake[2].ki.wVk = VK_UP;
-    wake[2].ki.dwFlags = KEYEVENTF_EXTENDEDKEY;
-    wake[3].type = INPUT_KEYBOARD;
-    wake[3].ki.wVk = VK_UP;
-    wake[3].ki.dwFlags = KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP;
-
-    SendInput(4, wake, sizeof(INPUT));
-
-    // Wait 750ms for lock curtain to slide up and focus the PIN box
-    Sleep(750);
-
-    // Step 2: Send Backspaces to clear any partial input or wake-up space in the PIN box
-    for (int b = 0; b < 6; b++)
-    {
-        INPUT bs[2] = {0};
-        bs[0].type = INPUT_KEYBOARD;
-        bs[0].ki.wVk = VK_BACK;
-        bs[1].type = INPUT_KEYBOARD;
-        bs[1].ki.wVk = VK_BACK;
-        bs[1].ki.dwFlags = KEYEVENTF_KEYUP;
-        SendInput(2, bs, sizeof(INPUT));
-        Sleep(20);
-    }
-
-    Sleep(50);
-
-    // Step 3: Type each character of the PIN
-    LogMsg(L"SimulatePinInput: typing PIN characters...");
-    for (size_t i = 0; i < wcslen(pszPin); i++)
-    {
-        WCHAR ch = pszPin[i];
+        // Fallback for special Unicode symbols
         INPUT charInput[2] = {0};
         charInput[0].type = INPUT_KEYBOARD;
         charInput[0].ki.wScan = ch;
@@ -643,20 +614,90 @@ static void SimulatePinInput(LPCWSTR pszPin)
         charInput[1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
 
         SendInput(2, charInput, sizeof(INPUT));
-        Sleep(40);
+        Sleep(8);
+        return;
+    }
+
+    BYTE vk = LOBYTE(vkState);
+    BYTE shiftState = HIBYTE(vkState);
+    bool bShift = (shiftState & 1) != 0;
+
+    if (bShift)
+    {
+        INPUT shiftDown = {0};
+        shiftDown.type = INPUT_KEYBOARD;
+        shiftDown.ki.wVk = VK_SHIFT;
+        shiftDown.ki.wScan = (WORD)MapVirtualKeyW(VK_SHIFT, MAPVK_VK_TO_VSC);
+        SendInput(1, &shiftDown, sizeof(INPUT));
+        Sleep(4);
+    }
+
+    INPUT keyInp[2] = {0};
+    keyInp[0].type = INPUT_KEYBOARD;
+    keyInp[0].ki.wVk = vk;
+    keyInp[0].ki.wScan = (WORD)MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
+
+    keyInp[1].type = INPUT_KEYBOARD;
+    keyInp[1].ki.wVk = vk;
+    keyInp[1].ki.wScan = keyInp[0].ki.wScan;
+    keyInp[1].ki.dwFlags = KEYEVENTF_KEYUP;
+
+    SendInput(1, &keyInp[0], sizeof(INPUT));
+    Sleep(6);
+    SendInput(1, &keyInp[1], sizeof(INPUT));
+    Sleep(6);
+
+    if (bShift)
+    {
+        INPUT shiftUp = {0};
+        shiftUp.type = INPUT_KEYBOARD;
+        shiftUp.ki.wVk = VK_SHIFT;
+        shiftUp.ki.wScan = (WORD)MapVirtualKeyW(VK_SHIFT, MAPVK_VK_TO_VSC);
+        shiftUp.ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput(1, &shiftUp, sizeof(INPUT));
+        Sleep(4);
+    }
+}
+
+static void SimulatePinInput(LPCWSTR pszPin)
+{
+    if (!pszPin || wcslen(pszPin) == 0) return;
+
+    LogMsg(L"SimulatePinInput: starting instantaneous simulation for %d characters...", (int)wcslen(pszPin));
+
+    HDESK hInputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
+    if (hInputDesk)
+    {
+        SetThreadDesktop(hInputDesk);
+        LogMsg(L"SimulatePinInput: attached to input desktop.");
+    }
+
+    // Step 1: Send Spacebar + Extended Up Arrow to slide up the lock screen curtain upon verified face match
+    LogMsg(L"SimulatePinInput: sliding up lock curtain (Spacebar + Extended Up)...");
+    SendKey(VK_SPACE);
+    SendKey(VK_UP, true);
+
+    // Fast 220ms buffer for lock curtain slide-up animation and PIN box focus
+    Sleep(220);
+
+    // Step 2: Clear wake-up space or any accidental input from the PIN box
+    for (int b = 0; b < 6; b++)
+    {
+        SendKey(VK_BACK);
+    }
+
+    // Step 3: Type each character with genuine hardware virtual keys, scan codes, and shift modifiers
+    LogMsg(L"SimulatePinInput: typing PIN characters instantaneously with hardware virtual keys...");
+    for (size_t i = 0; i < wcslen(pszPin); i++)
+    {
+        SendCharKey(pszPin[i]);
     }
 
     // Step 4: Submit PIN with Enter
-    Sleep(100);
-    INPUT enter[2] = {0};
-    enter[0].type = INPUT_KEYBOARD;
-    enter[0].ki.wVk = VK_RETURN;
-    enter[1].type = INPUT_KEYBOARD;
-    enter[1].ki.wVk = VK_RETURN;
-    enter[1].ki.dwFlags = KEYEVENTF_KEYUP;
-    SendInput(2, enter, sizeof(INPUT));
+    Sleep(25);
+    SendKey(VK_RETURN);
 
-    LogMsg(L"SimulatePinInput: PIN sent successfully.");
+    LogMsg(L"SimulatePinInput: PIN entered and submitted instantaneously.");
 }
 
 static void EnsureDaemonRunning()
