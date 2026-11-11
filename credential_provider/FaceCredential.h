@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "FaceOverlay.h"
 
 class FaceCredentialProvider;
 
@@ -54,9 +55,11 @@ private:
     FaceCredentialProvider* m_pProvider;
     ICredentialProviderCredentialEvents* m_pEvents;
     LPWSTR m_pszUserSid;
+    WCHAR m_username[128];
     WCHAR m_statusText[256];
     BOOL m_bVerified;
     HANDLE m_hThread;
     BOOL m_bStopThread;
     CRITICAL_SECTION m_cs;
+    FaceOverlay m_overlay;
 };

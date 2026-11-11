@@ -1,12 +1,46 @@
 #include "FaceCredential.h"
 #include "FaceCredentialProvider.h"
 #include <shlwapi.h>
-#include <shellapi.h>
+#include <wtsapi32.h>
+#include <sddl.h>
 
 #pragma comment(lib, "shlwapi.lib")
-#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "wtsapi32.lib")
 
 extern HINSTANCE g_hInst;
+
+static LPWSTR QueryActiveSessionUserSid()
+{
+    DWORD sessionId = WTSGetActiveConsoleSessionId();
+    if (sessionId == 0xFFFFFFFF) return nullptr;
+
+    HANDLE hToken = NULL;
+    if (WTSQueryUserToken(sessionId, &hToken))
+    {
+        DWORD dwSize = 0;
+        GetTokenInformation(hToken, TokenUser, NULL, 0, &dwSize);
+        if (dwSize > 0)
+        {
+            PTOKEN_USER pTokenUser = (PTOKEN_USER)malloc(dwSize);
+            if (pTokenUser && GetTokenInformation(hToken, TokenUser, pTokenUser, dwSize, &dwSize))
+            {
+                LPWSTR pszSid = NULL;
+                if (ConvertSidToStringSidW(pTokenUser->User.Sid, &pszSid))
+                {
+                    LPWSTR result = NULL;
+                    SHStrDupW(pszSid, &result);
+                    LocalFree(pszSid);
+                    free(pTokenUser);
+                    CloseHandle(hToken);
+                    return result;
+                }
+            }
+            if (pTokenUser) free(pTokenUser);
+        }
+        CloseHandle(hToken);
+    }
+    return nullptr;
+}
 
 FaceCredential::FaceCredential() :
     m_cRef(1),
@@ -19,12 +53,14 @@ FaceCredential::FaceCredential() :
     m_bStopThread(FALSE)
 {
     InitializeCriticalSection(&m_cs);
+    StringCchCopyW(m_username, ARRAYSIZE(m_username), L"Aryan");
     StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Windows Hello: Looking for you...");
 }
 
 FaceCredential::~FaceCredential()
 {
     m_bStopThread = TRUE;
+    m_overlay.Hide();
     if (m_hThread)
     {
         WaitForSingleObject(m_hThread, 1000);
@@ -51,6 +87,10 @@ void FaceCredential::Initialize(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, FaceCre
     if (pszUserSid)
     {
         SHStrDupW(pszUserSid, &m_pszUserSid);
+    }
+    else
+    {
+        m_pszUserSid = QueryActiveSessionUserSid();
     }
 }
 
@@ -105,7 +145,7 @@ HRESULT FaceCredential::Advise(ICredentialProviderCredentialEvents* pcpce)
     }
     LeaveCriticalSection(&m_cs);
 
-    // Auto-start scanning immediately when screen locks or wakes!
+    // Auto-start scanning on lock screen
     StartVerification();
     return S_OK;
 }
@@ -114,6 +154,7 @@ HRESULT FaceCredential::UnAdvise()
 {
     EnterCriticalSection(&m_cs);
     m_bStopThread = TRUE;
+    m_overlay.Hide();
     if (m_pEvents)
     {
         m_pEvents->Release();
@@ -128,34 +169,8 @@ void FaceCredential::StartVerification()
     if (!m_hThread && !m_bVerified)
     {
         m_bStopThread = FALSE;
-
-        // ── Launch the Windows Hello animation overlay ──
-        // Resolve path: <DLL folder>\..\ui\show_hello.py
-        WCHAR dllDir[MAX_PATH] = {0};
-        GetModuleFileNameW(g_hInst, dllDir, ARRAYSIZE(dllDir));
-        PathRemoveFileSpecW(dllDir);   // now = credential_provider\
-
-        WCHAR pythonExe[MAX_PATH] = {0};
-        PathCombineW(pythonExe, dllDir, L"..\\.venv\\Scripts\\pythonw.exe");
-
-        WCHAR scriptPath[MAX_PATH] = {0};
-        PathCombineW(scriptPath, dllDir, L"..\\ui\\show_hello.py");
-
-        // Build quoted argument string: "ui\show_hello.py" "Username"
-        WCHAR args[MAX_PATH * 2] = {0};
-        StringCchPrintfW(args, ARRAYSIZE(args), L"\"%s\" \"%s\"", scriptPath, L"Aryan");
-
-        // ShellExecute launches in the user's desktop session (session 1)
-        // even when called from the credential provider (session 0 / Winlogon)
-        ShellExecuteW(
-            NULL,           // hwnd
-            L"open",        // verb
-            pythonExe,      // pythonw.exe (no console window)
-            args,           // arguments
-            NULL,           // working dir
-            SW_HIDE         // hidden – the pywebview window IS the UI
-        );
-
+        // Show smooth native transparent overlay on the Winlogon desktop
+        m_overlay.Show(m_username);
         m_hThread = CreateThread(NULL, 0, VerificationThread, this, 0, NULL);
     }
 }
@@ -184,7 +199,7 @@ void FaceCredential::DoVerification()
 
     HANDLE hPipe = INVALID_HANDLE_VALUE;
     int retry = 0;
-    while (!m_bStopThread && retry < 15)
+    while (!m_bStopThread && retry < 25)
     {
         hPipe = CreateFileW(
             pipeName,
@@ -198,7 +213,7 @@ void FaceCredential::DoVerification()
         if (hPipe != INVALID_HANDLE_VALUE)
             break;
 
-        Sleep(150);
+        Sleep(200);
         retry++;
     }
 
@@ -206,6 +221,7 @@ void FaceCredential::DoVerification()
     {
         EnterCriticalSection(&m_cs);
         StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Windows Hello service unreachable. Use PIN/Password.");
+        m_overlay.SetState(OVERLAY_FAILED, L"Service unreachable. Use PIN.");
         LeaveCriticalSection(&m_cs);
         if (m_pEvents)
         {
@@ -214,12 +230,12 @@ void FaceCredential::DoVerification()
         return;
     }
 
-    // Send "VERIFY" command
+    // Send "VERIFY" command to face_service
     const char cmd[] = "VERIFY\n";
     DWORD bytesWritten = 0;
     WriteFile(hPipe, cmd, (DWORD)strlen(cmd), &bytesWritten, NULL);
 
-    // Read response
+    // Read verification response
     char buffer[1024] = {0};
     DWORD bytesRead = 0;
     if (ReadFile(hPipe, buffer, sizeof(buffer) - 1, &bytesRead, NULL) && bytesRead > 0)
@@ -227,9 +243,25 @@ void FaceCredential::DoVerification()
         buffer[bytesRead] = '\0';
         if (strstr(buffer, "\"status\": \"verified\""))
         {
+            // Extract username if provided
+            const char* userKey = "\"username\": \"";
+            const char* pUser = strstr(buffer, userKey);
+            if (pUser)
+            {
+                pUser += strlen(userKey);
+                char uname[64] = {0};
+                int idx = 0;
+                while (*pUser && *pUser != '\"' && idx < 63)
+                {
+                    uname[idx++] = *pUser++;
+                }
+                MultiByteToWideChar(CP_UTF8, 0, uname, -1, m_username, ARRAYSIZE(m_username));
+            }
+
             EnterCriticalSection(&m_cs);
             m_bVerified = TRUE;
-            StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Making sure it's you... Welcome!");
+            StringCchPrintfW(m_statusText, ARRAYSIZE(m_statusText), L"Welcome back, %s!", m_username);
+            m_overlay.SetState(OVERLAY_VERIFIED);
             LeaveCriticalSection(&m_cs);
 
             if (m_pEvents)
@@ -237,7 +269,6 @@ void FaceCredential::DoVerification()
                 m_pEvents->SetFieldString(this, FPF_STATUS_TEXT, m_statusText);
                 m_pEvents->SetFieldState(this, FPF_SUBMIT_BUTTON, CPFS_DISPLAY_IN_SELECTED_TILE);
 
-                // Update icon to official winking smiley
                 HBITMAP hbmpWink = LoadAssetBitmap(L"hello_wink.bmp");
                 if (hbmpWink)
                 {
@@ -253,7 +284,8 @@ void FaceCredential::DoVerification()
         else
         {
             EnterCriticalSection(&m_cs);
-            StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Looking for you... Click to retry or choose PIN/Password.");
+            StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Couldn't recognize face. Click to retry or use PIN.");
+            m_overlay.SetState(OVERLAY_FAILED, L"Couldn't recognize face. Use PIN.");
             LeaveCriticalSection(&m_cs);
             if (m_pEvents)
             {
@@ -275,6 +307,7 @@ HRESULT FaceCredential::SetSelected(BOOL* pbAutoLogon)
 HRESULT FaceCredential::SetDeselected()
 {
     m_bStopThread = TRUE;
+    m_overlay.Hide();
     if (m_hThread)
     {
         WaitForSingleObject(m_hThread, 300);
@@ -293,7 +326,8 @@ HRESULT FaceCredential::GetFieldState(DWORD dwFieldID,
     switch (dwFieldID)
     {
     case FPF_LOGO:
-        *pcpfs = CPFS_DISPLAY_IN_SELECTED_TILE;
+        // Visible in BOTH the selected tile and the "Sign-in options" list alongside PIN!
+        *pcpfs = CPFS_DISPLAY_IN_BOTH;
         *pcpfis = CPFIS_NONE;
         break;
     case FPF_STATUS_TEXT:
@@ -334,7 +368,6 @@ HRESULT FaceCredential::GetBitmapValue(DWORD dwFieldID, HBITMAP* phbmp)
 
     if (dwFieldID == FPF_LOGO)
     {
-        // Load official Windows Hello face bitmap
         *phbmp = LoadAssetBitmap(m_bVerified ? L"hello_wink.bmp" : L"hello_normal.bmp");
         return S_OK;
     }
@@ -397,6 +430,13 @@ HRESULT FaceCredential::GetUserSid(LPWSTR* ppszSid)
     if (m_pszUserSid)
     {
         return SHStrDupW(m_pszUserSid, ppszSid);
+    }
+    // Fall back to active console user SID
+    LPWSTR activeSid = QueryActiveSessionUserSid();
+    if (activeSid)
+    {
+        *ppszSid = activeSid;
+        return S_OK;
     }
     *ppszSid = nullptr;
     return S_OK;

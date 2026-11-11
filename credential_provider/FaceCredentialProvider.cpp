@@ -191,9 +191,9 @@ HRESULT FaceCredentialProvider::GetCredentialCount(DWORD* pdwCount, DWORD* pdwDe
 
     // Provide 1 credential tile
     *pdwCount = 1;
-    *pdwDefault = 0;
-    // Auto-select on screen wake without needing user to click!
-    *pbAutoLogonWithDefault = TRUE;
+    // Do NOT hijack default credential so Windows PIN and Password remain fully accessible!
+    *pdwDefault = CREDENTIAL_PROVIDER_NO_DEFAULT;
+    *pbAutoLogonWithDefault = FALSE;
     return S_OK;
 }
 

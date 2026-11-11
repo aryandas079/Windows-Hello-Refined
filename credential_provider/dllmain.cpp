@@ -1,7 +1,11 @@
 #include "FaceCredentialProvider.h"
+#include <gdiplus.h>
+
+#pragma comment(lib, "gdiplus.lib")
 
 HINSTANCE g_hInst = NULL;
 long g_cDllRef = 0;
+static ULONG_PTR g_gdiplusToken = 0;
 
 class CClassFactory : public IClassFactory
 {
@@ -58,6 +62,16 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
     {
         g_hInst = hinstDLL;
         DisableThreadLibraryCalls(hinstDLL);
+        Gdiplus::GdiplusStartupInput gdiInput;
+        Gdiplus::GdiplusStartup(&g_gdiplusToken, &gdiInput, NULL);
+    }
+    else if (fdwReason == DLL_PROCESS_DETACH)
+    {
+        if (g_gdiplusToken)
+        {
+            Gdiplus::GdiplusShutdown(g_gdiplusToken);
+            g_gdiplusToken = 0;
+        }
     }
     return TRUE;
 }
