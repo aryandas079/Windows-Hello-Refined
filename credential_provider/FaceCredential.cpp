@@ -593,9 +593,9 @@ static void SendKey(WORD vk, bool bExtended = false)
     inputs[1].ki.dwFlags = (bExtended ? KEYEVENTF_EXTENDEDKEY : 0) | KEYEVENTF_KEYUP;
 
     SendInput(1, &inputs[0], sizeof(INPUT));
-    Sleep(6);
+    Sleep(12);
     SendInput(1, &inputs[1], sizeof(INPUT));
-    Sleep(6);
+    Sleep(12);
 }
 
 static void SendCharKey(WCHAR ch)
@@ -613,8 +613,10 @@ static void SendCharKey(WCHAR ch)
         charInput[1].ki.wScan = ch;
         charInput[1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
 
-        SendInput(2, charInput, sizeof(INPUT));
-        Sleep(8);
+        SendInput(1, &charInput[0], sizeof(INPUT));
+        Sleep(12);
+        SendInput(1, &charInput[1], sizeof(INPUT));
+        Sleep(12);
         return;
     }
 
@@ -629,7 +631,7 @@ static void SendCharKey(WCHAR ch)
         shiftDown.ki.wVk = VK_SHIFT;
         shiftDown.ki.wScan = (WORD)MapVirtualKeyW(VK_SHIFT, MAPVK_VK_TO_VSC);
         SendInput(1, &shiftDown, sizeof(INPUT));
-        Sleep(4);
+        Sleep(8);
     }
 
     INPUT keyInp[2] = {0};
@@ -643,9 +645,9 @@ static void SendCharKey(WCHAR ch)
     keyInp[1].ki.dwFlags = KEYEVENTF_KEYUP;
 
     SendInput(1, &keyInp[0], sizeof(INPUT));
-    Sleep(6);
+    Sleep(12);
     SendInput(1, &keyInp[1], sizeof(INPUT));
-    Sleep(6);
+    Sleep(12);
 
     if (bShift)
     {
@@ -655,7 +657,7 @@ static void SendCharKey(WCHAR ch)
         shiftUp.ki.wScan = (WORD)MapVirtualKeyW(VK_SHIFT, MAPVK_VK_TO_VSC);
         shiftUp.ki.dwFlags = KEYEVENTF_KEYUP;
         SendInput(1, &shiftUp, sizeof(INPUT));
-        Sleep(4);
+        Sleep(8);
     }
 }
 
@@ -663,7 +665,7 @@ static void SimulatePinInput(LPCWSTR pszPin)
 {
     if (!pszPin || wcslen(pszPin) == 0) return;
 
-    LogMsg(L"SimulatePinInput: starting instantaneous simulation for %d characters...", (int)wcslen(pszPin));
+    LogMsg(L"SimulatePinInput: starting simulation for %d characters...", (int)wcslen(pszPin));
 
     HDESK hInputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
     if (hInputDesk)
@@ -672,55 +674,62 @@ static void SimulatePinInput(LPCWSTR pszPin)
         LogMsg(L"SimulatePinInput: attached to input desktop.");
     }
 
-    // Step 1: Send Spacebar + Extended Up Arrow to slide up the lock screen curtain upon verified face match
-    LogMsg(L"SimulatePinInput: sliding up lock curtain (Spacebar + Extended Up)...");
+    // Step 1: Dismiss lock screen curtain (Spacebar) to reveal the LogonUI PIN interface
+    LogMsg(L"SimulatePinInput: dismissing lock screen curtain...");
     SendKey(VK_SPACE);
-    SendKey(VK_UP, true);
 
-    // Fast 220ms buffer for lock curtain slide-up animation and PIN box focus
-    Sleep(220);
+    // Wait 450ms for Windows 11 lock screen curtain slide-up animation to complete
+    // and for LogonUI's PIN edit control to gain active keyboard focus
+    Sleep(450);
 
-    // Step 2: Clear wake-up space or any accidental input from the PIN box
-    for (int b = 0; b < 6; b++)
+    // Step 2: Ensure PIN box is completely clean and empty (Ctrl+A then Backspace)
+    INPUT ctrlA[4] = {0};
+    ctrlA[0].type = INPUT_KEYBOARD;
+    ctrlA[0].ki.wVk = VK_CONTROL;
+    ctrlA[0].ki.wScan = (WORD)MapVirtualKeyW(VK_CONTROL, MAPVK_VK_TO_VSC);
+
+    ctrlA[1].type = INPUT_KEYBOARD;
+    ctrlA[1].ki.wVk = 'A';
+    ctrlA[1].ki.wScan = (WORD)MapVirtualKeyW('A', MAPVK_VK_TO_VSC);
+
+    ctrlA[2].type = INPUT_KEYBOARD;
+    ctrlA[2].ki.wVk = 'A';
+    ctrlA[2].ki.wScan = ctrlA[1].ki.wScan;
+    ctrlA[2].ki.dwFlags = KEYEVENTF_KEYUP;
+
+    ctrlA[3].type = INPUT_KEYBOARD;
+    ctrlA[3].ki.wVk = VK_CONTROL;
+    ctrlA[3].ki.wScan = ctrlA[0].ki.wScan;
+    ctrlA[3].ki.dwFlags = KEYEVENTF_KEYUP;
+
+    SendInput(4, ctrlA, sizeof(INPUT));
+    Sleep(15);
+
+    SendKey(VK_BACK);
+    Sleep(15);
+
+    for (int b = 0; b < 4; b++)
     {
         SendKey(VK_BACK);
     }
+    Sleep(20);
 
-    // Step 3: Type each character with genuine hardware virtual keys, scan codes, and shift modifiers
-    LogMsg(L"SimulatePinInput: typing PIN characters instantaneously with hardware virtual keys...");
+    // Step 3: Type each character with hardware virtual keys, scan codes, and shift modifiers
+    LogMsg(L"SimulatePinInput: typing PIN characters...");
     for (size_t i = 0; i < wcslen(pszPin); i++)
     {
         SendCharKey(pszPin[i]);
     }
 
     // Step 4: Submit PIN with Enter
-    Sleep(25);
+    Sleep(60);
     SendKey(VK_RETURN);
+    LogMsg(L"SimulatePinInput: PIN entered and submitted.");
 
-    LogMsg(L"SimulatePinInput: PIN entered and submitted instantaneously.");
-}
-
-static void RevealPinInterface()
-{
-    LogMsg(L"RevealPinInterface: sliding up lock curtain to reveal Windows Hello PIN section...");
-    HDESK hInputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
     if (hInputDesk)
     {
-        SetThreadDesktop(hInputDesk);
-        LogMsg(L"RevealPinInterface: attached to input desktop.");
+        CloseDesktop(hInputDesk);
     }
-
-    // Wake and slide up the lock screen curtain to reveal the PIN section
-    SendKey(VK_SPACE);
-    SendKey(VK_UP, true);
-
-    // Fast 150ms buffer, then clear the wake-up space character so the PIN box is clean and focused
-    Sleep(150);
-    for (int b = 0; b < 6; b++)
-    {
-        SendKey(VK_BACK);
-    }
-    LogMsg(L"RevealPinInterface: Windows Hello PIN interface revealed and ready for user input.");
 }
 
 static void EnsureDaemonRunning()
@@ -844,8 +853,6 @@ void FaceCredential::DoVerification()
         {
             m_pEvents->SetFieldString(this, FPF_STATUS_TEXT, m_statusText);
         }
-        Sleep(350);
-        RevealPinInterface();
         return;
     }
 
@@ -908,7 +915,7 @@ void FaceCredential::DoVerification()
         }
         else
         {
-            LogMsg(L"Face verification failed or timed out. Opening Windows Hello PIN section...");
+            LogMsg(L"Face verification failed or timed out. Waiting for user interaction on lock screen...");
             EnterCriticalSection(&m_cs);
             StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Couldn't recognize face. Enter your PIN.");
             m_overlay.SetState(OVERLAY_FAILED, L"Couldn't recognize face. Enter your PIN.");
@@ -917,10 +924,6 @@ void FaceCredential::DoVerification()
             {
                 m_pEvents->SetFieldString(this, FPF_STATUS_TEXT, m_statusText);
             }
-
-            // Show failed status briefly, then automatically slide up to the Windows Hello PIN section
-            Sleep(350);
-            RevealPinInterface();
         }
     }
     else

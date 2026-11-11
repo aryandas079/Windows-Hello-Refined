@@ -1,5 +1,12 @@
 import os
 import sys
+
+# Disable OpenCV OBSENSOR probe
+os.environ["OPENCV_VIDEOIO_ENABLE_OBSENSOR"] = "0"
+os.environ["OPENCV_VIDEOIO_PRIORITY_OBSENSOR"] = "0"
+os.environ["OPENCV_VIDEOIO_PRIORITY_MSMF"] = "0"
+os.environ["OPENCV_LOG_LEVEL"] = "ERROR"
+
 import time
 import getpass
 import subprocess
@@ -75,90 +82,102 @@ def main():
     print_header()
     username = getpass.getuser()
     print(f"[*] Target Windows User: [{username}]")
-    print("[*] Initializing neural models (YuNet + SFace)...")
 
-    engine = FaceEngine()
+    existing_profile = load_profile()
+    enroll_needed = True
+    if existing_profile and len(existing_profile.get("embeddings", [])) >= 10:
+        print(f"\n[+] Verified face profile already exists for user [{existing_profile.get('username', username)}] with {len(existing_profile['embeddings'])} biometric samples.")
+        re_enroll = input("    Do you want to re-enroll your face? [y/N]: ").strip().lower()
+        if re_enroll != 'y':
+            print("[+] Keeping existing biometric profile.")
+            enroll_needed = False
 
-    print("[*] Opening camera...")
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-    if not cap.isOpened():
-        cap = cv2.VideoCapture(0, cv2.CAP_MSMF)
-    if not cap.isOpened():
-        print("[!] ERROR: Could not access webcam. Make sure no other app is using it.")
-        return 1
+    if enroll_needed:
+        print("[*] Initializing neural models (YuNet + SFace)...")
+        engine = FaceEngine()
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        print("[*] Opening camera...")
+        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            cap = cv2.VideoCapture(0, cv2.CAP_MSMF)
+        if not cap.isOpened():
+            print("[!] ERROR: Could not access webcam. Make sure no other app is using it.")
+            return 1
 
-    # Discard initial dark sensor frames
-    for _ in range(5):
-        cap.read()
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
-    window_title = "Windows Hello - Face Setup"
-    cv2.namedWindow(window_title, cv2.WINDOW_AUTOSIZE)
+        # Discard initial dark sensor frames
+        for _ in range(3):
+            cap.read()
 
-    step_idx = 0
-    step_samples = 0
-    collected_embeddings = []
-    last_sample_time = 0
+        window_title = "Windows Hello - Face Setup"
+        cv2.namedWindow(window_title, cv2.WINDOW_AUTOSIZE)
 
-    print("\n[+] Camera preview opened! Please look at the window:")
-    print("    Follow the on-screen instructions across 4 angles (takes ~8 seconds).")
+        step_idx = 0
+        step_samples = 0
+        collected_embeddings = []
+        last_sample_time = 0
 
-    try:
-        while step_idx < len(STEPS):
-            ret, frame = cap.read()
-            if not ret:
-                time.sleep(0.01)
-                continue
+        print("\n[+] Camera preview opened! Please look at the window:")
+        print("    Follow the on-screen instructions across 4 angles (takes ~8 seconds).")
 
-            current_step = STEPS[step_idx]
-            face, _ = engine.detect_face(frame)
+        try:
+            while step_idx < len(STEPS):
+                ret, frame = cap.read()
+                if not ret:
+                    time.sleep(0.01)
+                    continue
 
-            now = time.time()
-            if face is not None:
-                is_live, _, _ = engine.check_liveness(frame, face)
-                if is_live:
-                    if now - last_sample_time > 0.35:
-                        feature = engine.extract_features(frame, face)
-                        collected_embeddings.append(feature)
-                        step_samples += 1
-                        last_sample_time = now
+                current_step = STEPS[step_idx]
+                face, _ = engine.detect_face(frame)
 
-                        if step_samples >= current_step["target"]:
-                            step_idx += 1
-                            step_samples = 0
-                            time.sleep(0.2)
+                now = time.time()
+                if face is not None:
+                    is_live, _, _ = engine.check_liveness(frame, face)
+                    if is_live:
+                        if now - last_sample_time > 0.35:
+                            feature = engine.extract_features(frame, face)
+                            collected_embeddings.append(feature)
+                            step_samples += 1
+                            last_sample_time = now
 
-            draw_hud(frame, face, current_step, step_samples, len(collected_embeddings))
-            cv2.imshow(window_title, frame)
+                            if step_samples >= current_step["target"]:
+                                step_idx += 1
+                                step_samples = 0
+                                time.sleep(0.2)
 
-            key = cv2.waitKey(1) & 0xFF
-            if key == 27 or key == ord('q'):
-                print("\n[!] Setup cancelled by user.")
-                return 1
-
-        # Completed all steps!
-        print("\n[+] All 14 multi-angle biometric samples collected successfully!")
-        print("[*] Encrypting profile with Windows DPAPI...")
-        saved_path = save_profile(username, collected_embeddings)
-        print(f"[+] Biometric profile saved to: {saved_path}")
-
-        # Show success screen
-        for _ in range(30):
-            ret, frame = cap.read()
-            if ret:
-                h, w = frame.shape[:2]
-                cv2.rectangle(frame, (40, h//2 - 50), (w - 40, h//2 + 50), (0, 180, 0), -1)
-                cv2.putText(frame, "SETUP COMPLETE!", (w//2 - 140, h//2 + 8),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+                draw_hud(frame, face, current_step, step_samples, len(collected_embeddings))
                 cv2.imshow(window_title, frame)
-                if cv2.waitKey(30) & 0xFF == 27:
-                    break
 
-    finally:
-        cap.release()
-        cv2.destroyAllWindows()
+                key = cv2.waitKey(1) & 0xFF
+                if key == 27 or key == ord('q'):
+                    print("\n[!] Setup cancelled by user.")
+                    return 1
+
+            # Completed all steps!
+            print("\n[+] All 14 multi-angle biometric samples collected successfully!")
+            print("[*] Encrypting profile with Windows DPAPI...")
+            saved_path = save_profile(username, collected_embeddings)
+            print(f"[+] Biometric profile saved to: {saved_path}")
+
+            # Show success screen
+            for _ in range(30):
+                ret, frame = cap.read()
+                if ret:
+                    h, w = frame.shape[:2]
+                    cv2.rectangle(frame, (40, h//2 - 50), (w - 40, h//2 + 50), (0, 180, 0), -1)
+                    cv2.putText(frame, "SETUP COMPLETE!", (w//2 - 140, h//2 + 8),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+                    cv2.imshow(window_title, frame)
+                    if cv2.waitKey(30) & 0xFF == 27:
+                        break
+
+        finally:
+            cap.release()
+            cv2.destroyAllWindows()
 
     # ── Windows Hello PIN for automatic lock screen unlock ───────────
     print("\n" + "=" * 68)
@@ -168,11 +187,24 @@ def main():
     print("  Your PIN is encrypted locally with Windows DPAPI (Local Machine).")
     print("=" * 68)
 
-    try:
-        from save_pin import main as save_pin_main
-        save_pin_main()
-    except Exception as e:
-        print(f"[*] Note: {e}")
+    creds = load_credentials()
+    if creds and creds.get("pin"):
+        print(f"\n[+] Saved Windows Hello PIN already configured for [{creds.get('username', username)}].")
+        change_pin = input("    Do you want to re-enter/change your saved PIN? [y/N]: ").strip().lower()
+        if change_pin == 'y':
+            try:
+                from save_pin import main as save_pin_main
+                save_pin_main()
+            except Exception as e:
+                print(f"[*] Note: {e}")
+        else:
+            print("[+] Keeping existing encrypted Windows Hello PIN.")
+    else:
+        try:
+            from save_pin import main as save_pin_main
+            save_pin_main()
+        except Exception as e:
+            print(f"[*] Note: {e}")
 
     # ── Self-test validation ──────────────────────────────────────────
     print("\n[*] Running instant self-test validation...")

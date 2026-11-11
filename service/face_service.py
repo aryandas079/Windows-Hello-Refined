@@ -1,5 +1,13 @@
 import os
 import sys
+
+# CRITICAL: Disable OpenCV OBSENSOR (Orbbec 3D) probe before cv2 import!
+# Probing obsensor introduces a 5.7-second hang enumerating non-existent 3D depth channels.
+os.environ["OPENCV_VIDEOIO_ENABLE_OBSENSOR"] = "0"
+os.environ["OPENCV_VIDEOIO_PRIORITY_OBSENSOR"] = "0"
+os.environ["OPENCV_VIDEOIO_PRIORITY_MSMF"] = "0"
+os.environ["OPENCV_LOG_LEVEL"] = "ERROR"
+
 import time
 import json
 import threading
@@ -61,8 +69,10 @@ class FaceDaemon:
             if not self.camera.isOpened():
                 self.camera = cv2.VideoCapture(self.camera_index, cv2.CAP_MSMF)
             if self.camera.isOpened():
+                self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                 self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                 self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         return self.camera.isOpened() if self.camera else False
 
     def release_camera(self):
@@ -76,10 +86,10 @@ class FaceDaemon:
             self.camera = None
             log_service("Camera hardware released (LED off).")
 
-    def verify_current_face(self, timeout_sec=3.5):
+    def verify_current_face(self, timeout_sec=4.0):
         """
         Runs face recognition for up to timeout_sec seconds.
-        Fast 3.5s timeout matching genuine Windows Hello behavior.
+        Instant ~0.5s matching true Windows Hello experience.
         GUARANTEES camera is opened only during verification and released immediately after.
         """
         if not self.profile:
@@ -97,16 +107,12 @@ class FaceDaemon:
                     log_service("ERROR: Could not access camera.")
                     return {"status": "error", "message": "Could not access camera"}
 
-                # Discard 2 frames for auto-exposure stabilization
-                for _ in range(2):
-                    self.camera.read()
-
                 start_time = time.time()
                 frames_tested = 0
                 while time.time() - start_time < timeout_sec:
                     ret, frame = self.camera.read()
                     if not ret:
-                        time.sleep(0.015)
+                        time.sleep(0.01)
                         continue
 
                     frames_tested += 1
@@ -138,7 +144,7 @@ class FaceDaemon:
                                     resp["domain"] = creds["domain"]
                             return resp
 
-                    time.sleep(0.01)
+                    time.sleep(0.005)
 
                 log_service(f"Face verification timed out after {frames_tested} frames ({timeout_sec:.1f}s).")
                 return {"status": "failed", "message": "Face verification timed out"}
@@ -163,8 +169,15 @@ class FaceDaemon:
                 }
             elif cmd_str == "VERIFY":
                 log_service("Lock screen requested face verification...")
-                response = self.verify_current_face(timeout_sec=3.5)
+                response = self.verify_current_face(timeout_sec=4.0)
                 log_service(f"Verification outcome: status={response.get('status')}")
+            elif cmd_str in ("STOP", "EXIT", "RESTART"):
+                log_service("Received STOP/RESTART command. Terminating daemon process...")
+                response = {"status": "ok", "message": "Stopping daemon"}
+                res_bytes = (json.dumps(response) + "\n").encode('utf-8')
+                win32file.WriteFile(h_pipe, res_bytes)
+                threading.Thread(target=lambda: (time.sleep(0.3), os._exit(0))).start()
+                return
             else:
                 response = {"status": "unknown_command"}
 
