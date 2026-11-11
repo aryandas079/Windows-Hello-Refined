@@ -283,4 +283,4 @@ Windows will instantly restore default sign-in options without a reboot.
 ---
 
 ## License
-This project is open-source under the MIT License.
+This project is licensed under the Apache License, Version 2.0. See the [LICENSE](file:///d:/Projects_New/Windows%20Hello%20Refined/LICENSE) file for the full license text.
