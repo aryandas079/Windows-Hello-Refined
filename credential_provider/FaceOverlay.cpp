@@ -203,40 +203,40 @@ void FaceOverlay::RunAnimation()
     bool bIsCredUI = (m_scenario == CPUS_CREDUI || m_scenario == 3 || m_scenario == 4 ||
                       (hwndSec != NULL && IsWindowVisible(hwndSec)));
 
-    const int winW = bIsCredUI ? 280 : 320;
-    const int winH = bIsCredUI ? 150 : 160;
-
     HMONITOR hMon = MonitorFromWindow(hwndSec ? hwndSec : GetDesktopWindow(), MONITOR_DEFAULTTOPRIMARY);
     MONITORINFO mi = { sizeof(mi) };
     GetMonitorInfoW(hMon, &mi);
 
     int monW = mi.rcWork.right - mi.rcWork.left;
     int monH = mi.rcWork.bottom - mi.rcWork.top;
+
+    int winW = 320;
+    int winH = 160;
     int posX = mi.rcWork.left + (monW - winW) / 2;
     int posY = mi.rcWork.top + 45; // Default near top (lock screen under camera)
 
     if (bIsCredUI)
     {
-        // In CredUI (Windows Security dialog), replace the 9-dot PIN keypad icon and "Enter your PIN".
-        int cardCenterX = mi.rcWork.left + (monW / 2);
-        int cardCenterY = mi.rcWork.top + (monH / 2);
-
-        if (hwndSec && IsWindowVisible(hwndSec))
+        // In CredUI (Windows Security dialog), cover the entire PIN section (keypad icon, "Enter your PIN", and PIN box)
+        RECT rc = {0};
+        if (hwndSec && IsWindowVisible(hwndSec) && GetWindowRect(hwndSec, &rc))
         {
-            RECT rc;
-            if (GetWindowRect(hwndSec, &rc))
-            {
-                cardCenterX = rc.left + (rc.right - rc.left) / 2;
-                cardCenterY = rc.top + (rc.bottom - rc.top) / 2;
-            }
-        }
+            int dlgW = rc.right - rc.left;
+            int dlgH = rc.bottom - rc.top;
 
-        // Precise pixel alignment against Windows Security dialog:
-        // Horizontally centered on card center (matches 9-dot icon at cardCenterX)
-        // Positions Y so face icon (cy=30) lands exactly at 9-dot icon center (cardCenterY - 96)
-        posX = cardCenterX - (winW / 2);
-        posY = cardCenterY - 126;
-        LogOverlay(L"CredUI dialog scenario: overlay positioned over PIN icon at (%d,%d)", posX, posY);
+            winW = dlgW - 32;
+            winH = dlgH - 125;
+            posX = rc.left + 16;
+            posY = rc.top + 98;
+            LogOverlay(L"CredUI dialog scenario: covering entire PIN card area (%d,%d %dx%d)", posX, posY, winW, winH);
+        }
+        else
+        {
+            winW = 440;
+            winH = 260;
+            posX = mi.rcWork.left + (monW - winW) / 2;
+            posY = mi.rcWork.top + (monH / 2) - 50;
+        }
     }
 
     m_hwnd = CreateWindowExW(
@@ -444,7 +444,7 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
     bool bLightTheme = false;
 
     float cx = width / 2.0f;
-    float cy = bIsCredUI ? 30.0f : 44.0f;
+    float cy = bIsCredUI ? 52.0f : 44.0f;
 
     if (bIsCredUI)
     {
@@ -612,7 +612,7 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
     format.SetAlignment(Gdiplus::StringAlignmentCenter);
     format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
 
-    float textY = bIsCredUI ? 62.0f : 91.0f;
+    float textY = bIsCredUI ? 102.0f : 91.0f;
 
     if (!bLightTheme)
     {

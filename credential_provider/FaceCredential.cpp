@@ -741,7 +741,7 @@ static DWORD WINAPI PinSimulationThread(LPVOID lpParam)
     }
     else
     {
-        // CredUI scenario: ensure dialog window has focus
+        // CredUI scenario: ensure dialog window has focus and click into PIN box
         HWND hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
         if (!hwndDlg) hwndDlg = FindWindowW(NULL, L"Windows Security");
         if (!hwndDlg) hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", NULL);
@@ -750,6 +750,26 @@ static DWORD WINAPI PinSimulationThread(LPVOID lpParam)
             SetForegroundWindow(hwndDlg);
             BringWindowToTop(hwndDlg);
             Sleep(40);
+
+            RECT rcDlg;
+            if (GetWindowRect(hwndDlg, &rcDlg))
+            {
+                int dlgW = rcDlg.right - rcDlg.left;
+                int dlgH = rcDlg.bottom - rcDlg.top;
+                int pinX = rcDlg.left + dlgW / 2;
+                int pinY = rcDlg.top + (int)(dlgH * 0.77);
+
+                POINT oldCursor;
+                GetCursorPos(&oldCursor);
+                SetCursorPos(pinX, pinY);
+                Sleep(20);
+                mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+                Sleep(15);
+                mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+                Sleep(40);
+                SetCursorPos(oldCursor.x, oldCursor.y);
+                LogMsg(L"PinSimulationThread: focused CredUI PIN box via click at (%d,%d)", pinX, pinY);
+            }
         }
     }
 
