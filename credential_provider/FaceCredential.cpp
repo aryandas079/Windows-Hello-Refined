@@ -322,11 +322,6 @@ void FaceCredential::StartVerification()
     if (!m_hThread)
     {
         LogMsg(L"Starting verification thread (scenario=%d)...", m_cpus);
-        if (m_cpus == CPUS_UNLOCK_WORKSTATION || m_cpus == CPUS_LOGON)
-        {
-            // Tap space to wake/lift any lock screen curtain immediately
-            FastSendKey(VK_SPACE);
-        }
         m_overlay.Show(m_username, (int)m_cpus);
         m_hThread = CreateThread(NULL, 0, VerificationThread, this, 0, NULL);
     }

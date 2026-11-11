@@ -197,7 +197,8 @@ void FaceOverlay::SetState(OVERLAY_STATE state, const WCHAR* customText)
 void FaceOverlay::Hide(bool bForce)
 {
     EnterCriticalSection(&m_cs);
-    if (!bForce && IsLockScreenDesktopOverlay() && m_state != OVERLAY_VERIFIED)
+    bool bLockScenario = (m_scenario == CPUS_LOGON || m_scenario == CPUS_UNLOCK_WORKSTATION || (int)m_scenario <= 1);
+    if (!bForce && (bLockScenario || IsLockScreenDesktopOverlay()) && m_state != OVERLAY_VERIFIED)
     {
         LogOverlay(L"Hide requested but lock screen is still active; keeping overlay alive and scanning!");
         m_state = OVERLAY_SCANNING;
@@ -226,25 +227,44 @@ DWORD WINAPI FaceOverlay::AnimationThread(LPVOID lpParam)
 {
     FaceOverlay* pThis = reinterpret_cast<FaceOverlay*>(lpParam);
 
-    HDESK hInputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
-    if (!hInputDesk)
+    bool bLockScenario = (pThis->m_scenario == CPUS_LOGON || pThis->m_scenario == CPUS_UNLOCK_WORKSTATION || (int)pThis->m_scenario <= 1);
+
+    HDESK hTargetDesk = NULL;
+    if (bLockScenario)
     {
-        hInputDesk = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_SWITCHDESKTOP | DESKTOP_HOOKCONTROL);
+        // On lock screen, attach directly to Winlogon desktop where the lock screen and LogonUI live!
+        hTargetDesk = OpenDesktopW(L"Winlogon", 0, FALSE, MAXIMUM_ALLOWED);
+        if (!hTargetDesk)
+        {
+            hTargetDesk = OpenInputDesktop(0, FALSE, MAXIMUM_ALLOWED);
+        }
     }
-    if (!hInputDesk)
+    else
     {
-        hInputDesk = OpenDesktopW(L"Winlogon", 0, FALSE, GENERIC_ALL);
+        // On CredUI / in-session prompt, attach to active input desktop
+        hTargetDesk = OpenInputDesktop(0, FALSE, MAXIMUM_ALLOWED);
+        if (!hTargetDesk)
+        {
+            hTargetDesk = OpenDesktopW(L"Winlogon", 0, FALSE, MAXIMUM_ALLOWED);
+        }
     }
-    if (hInputDesk)
+
+    if (hTargetDesk)
     {
-        SetThreadDesktop(hInputDesk);
+        BOOL bSet = SetThreadDesktop(hTargetDesk);
+        LogOverlay(L"AnimationThread: SetThreadDesktop result=%d, err=%lu, hDesk=%p (scenario=%d)",
+                   bSet, GetLastError(), hTargetDesk, pThis->m_scenario);
+    }
+    else
+    {
+        LogOverlay(L"AnimationThread: OpenDesktop failed, err=%lu", GetLastError());
     }
 
     pThis->RunAnimation();
 
-    if (hInputDesk)
+    if (hTargetDesk)
     {
-        CloseDesktop(hInputDesk);
+        CloseDesktop(hTargetDesk);
     }
     return 0;
 }
@@ -264,11 +284,11 @@ void FaceOverlay::RunAnimation()
     wc.lpszClassName = className;
     RegisterClassExW(&wc);
 
-    bool bLockDesk = IsLockScreenDesktopOverlay();
+    bool bLockScenario = (m_scenario == CPUS_LOGON || m_scenario == CPUS_UNLOCK_WORKSTATION || (int)m_scenario <= 1);
     HWND hwndSec = NULL;
 
-    // In CredUI or in-session dialogs, wait briefly for CredUI XAML Host to become visible
-    if (!bLockDesk || m_scenario == CPUS_CREDUI || (int)m_scenario == 3 || (int)m_scenario == 4)
+    // Only search for CredUI window if NOT in lock screen scenario
+    if (!bLockScenario || m_scenario == CPUS_CREDUI || (int)m_scenario >= 3)
     {
         for (int i = 0; i < 20; i++)
         {
@@ -291,11 +311,11 @@ void FaceOverlay::RunAnimation()
         }
     }
 
-    bool bIsCredUI = (hwndSec != NULL && IsWindowVisible(hwndSec));
-    bool bIsLockScreen = bLockDesk && !bIsCredUI;
+    bool bIsCredUI = (hwndSec != NULL && IsWindowVisible(hwndSec)) && !bLockScenario;
+    bool bIsLockScreen = bLockScenario || !bIsCredUI;
 
-    // On interactive desktop with NO CredUI prompt, DO NOT show a floating detached window
-    if (!bLockDesk && !bIsCredUI)
+    // On interactive desktop with NO CredUI prompt and NOT lock screen, skip creation
+    if (!bLockScenario && !bIsCredUI)
     {
         LogOverlay(L"Interactive desktop without CredUI prompt: skipping overlay creation.");
         m_bRunning = FALSE;
@@ -306,14 +326,14 @@ void FaceOverlay::RunAnimation()
     MONITORINFO mi = { sizeof(mi) };
     GetMonitorInfoW(hMon, &mi);
 
-    int monW = mi.rcWork.right - mi.rcWork.left;
-    int monH = mi.rcWork.bottom - mi.rcWork.top;
+    int monW = mi.rcMonitor.right - mi.rcMonitor.left;
+    int monH = mi.rcMonitor.bottom - mi.rcMonitor.top;
 
-    int winW = 620;
-    int winH = 120;
-    int posX = mi.rcWork.left + (monW - winW) / 2;
-    // Exactly directly above the clock digits "2:49" on Windows 11 lock screen
-    int posY = mi.rcWork.top + (int)(monH * 0.20);
+    int winW = 440;
+    int winH = 100;
+    int posX = mi.rcMonitor.left + (monW - winW) / 2;
+    // Exactly at the top, just below the webcam as requested
+    int posY = mi.rcMonitor.top + 24;
 
     if (bIsCredUI)
     {
@@ -329,6 +349,10 @@ void FaceOverlay::RunAnimation()
         posX = rc.left + 32;
         posY = rc.top + (int)(dlgH * 0.39);
         LogOverlay(L"CredUI dialog scenario: attached replacement overlay (%d,%d %dx%d)", posX, posY, winW, winH);
+    }
+    else
+    {
+        LogOverlay(L"Lock screen scenario: top-of-screen webcam position (%d,%d %dx%d)", posX, posY, winW, winH);
     }
 
     typedef HWND (WINAPI *pfnCreateWindowInBand)(
@@ -593,22 +617,20 @@ void FaceOverlay::RunAnimation()
 
 void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
 {
-    HWND hwndSecDlg = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
-    if (!hwndSecDlg) hwndSecDlg = FindWindowW(NULL, L"Windows Security");
-    if (!hwndSecDlg) hwndSecDlg = FindWindowW(L"Credential Dialog Xaml Host", NULL);
-    if (hwndSecDlg)
+    HWND hwndSecDlg = NULL;
+    if (m_scenario == CPUS_CREDUI || (int)m_scenario >= 3)
     {
-        RECT rc = {0};
-        GetWindowRect(hwndSecDlg, &rc);
-        if (rc.right - rc.left >= 1000 || rc.bottom - rc.top >= 800) hwndSecDlg = NULL;
+        hwndSecDlg = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
+        if (!hwndSecDlg) hwndSecDlg = FindWindowW(NULL, L"Windows Security");
+        if (!hwndSecDlg) hwndSecDlg = FindWindowW(L"Credential Dialog Xaml Host", NULL);
     }
-    bool bLockDesk = IsLockScreenDesktopOverlay();
-    bool bIsCredUI = (hwndSecDlg != NULL && IsWindowVisible(hwndSecDlg));
-    bool bIsLockScreen = bLockDesk && !bIsCredUI;
+    bool bLockScenario = (m_scenario == CPUS_LOGON || m_scenario == CPUS_UNLOCK_WORKSTATION || (int)m_scenario <= 1);
+    bool bIsCredUI = (hwndSecDlg != NULL && IsWindowVisible(hwndSecDlg)) && !bLockScenario;
+    bool bIsLockScreen = bLockScenario || !bIsCredUI;
     bool bLightTheme = false;
 
     float cx = width / 2.0f;
-    float cy = bIsCredUI ? 38.0f : 50.0f;
+    float cy = bIsCredUI ? 38.0f : 34.0f;
 
     if (bIsCredUI)
     {
@@ -791,7 +813,7 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
         format.SetAlignment(Gdiplus::StringAlignmentCenter);
         format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
 
-        float textY = bIsCredUI ? 76.0f : 78.0f;
+        float textY = bIsCredUI ? 76.0f : 66.0f;
         float textH = 30.0f;
 
         if (!bLightTheme)
