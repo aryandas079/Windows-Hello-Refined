@@ -2,9 +2,9 @@ import os
 import sys
 import time
 import json
+import threading
 import win32pipe
 import win32file
-import win32event
 import pywintypes
 import cv2
 
@@ -19,12 +19,14 @@ from engine.storage import load_profile
 PIPE_NAME = r"\\.\pipe\WindowsHelloRefinedPipe"
 
 class FaceDaemon:
-    def __init__(self, camera_index=0):
+    def __init__(self, camera_index=0, show_hud=True):
         self.camera_index = camera_index
+        self.show_hud = show_hud
         print("[*] Initializing FaceDaemon engine...")
         self.engine = FaceEngine()
         self.profile = load_profile()
         self.camera = None
+        self.hud = None
         if self.profile:
             print(f"[*] Loaded profile for user: {self.profile['username']} ({len(self.profile['embeddings'])} embeddings)")
         else:
@@ -45,13 +47,19 @@ class FaceDaemon:
             self.camera.release()
             self.camera = None
 
-    def verify_current_face(self, timeout_sec=3.0):
-        """
-        Attempts to verify face from camera within timeout_sec.
-        Returns dict with success status, username, confidence, message.
-        """
+    def start_hud_async(self, username):
+        """Spawns the transparent top-center vector HUD in a separate process."""
+        import subprocess
+        python_exe = sys.executable
+        hud_script = os.path.join(BASE_DIR, "ui", "hello_hud.py")
+        try:
+            return subprocess.Popen([python_exe, hud_script, username])
+        except Exception as e:
+            print(f"[!] Could not spawn HUD: {e}")
+            return None
+
+    def verify_current_face(self, timeout_sec=4.0):
         if not self.profile:
-            # Try reloading profile in case it was just enrolled
             self.profile = load_profile()
             if not self.profile:
                 return {"status": "error", "message": "No enrolled profile"}
@@ -59,14 +67,17 @@ class FaceDaemon:
         if not self.ensure_camera():
             return {"status": "error", "message": "Could not access camera"}
 
-        start_time = time.time()
-        enrolled = self.profile["embeddings"]
         username = self.profile["username"]
+        enrolled = self.profile["embeddings"]
 
+        # Spawn top-center smooth vector HUD
+        hud_proc = self.start_hud_async(username) if self.show_hud else None
+
+        start_time = time.time()
         while time.time() - start_time < timeout_sec:
             ret, frame = self.camera.read()
             if not ret:
-                time.sleep(0.02)
+                time.sleep(0.015)
                 continue
 
             enhanced = self.engine.preprocess_lighting(frame)
@@ -81,21 +92,20 @@ class FaceDaemon:
                 is_match, similarity = self.engine.match_face(feature, enrolled)
 
                 if is_match:
+                    print(f"[*] Match verified! Similarity: {similarity:.2f}")
                     return {
                         "status": "verified",
                         "username": username,
                         "confidence": round(similarity * 100, 1),
-                        "message": f"Welcome, {username}!"
+                        "message": f"Welcome back, {username}!"
                     }
 
             time.sleep(0.01)
 
-        return {"status": "failed", "message": "Face verification timed out or unrecognized"}
+        return {"status": "failed", "message": "Face verification timed out"}
 
     def handle_client(self, h_pipe):
-        """Processes request from Credential Provider client."""
         try:
-            # Read command from pipe
             result, data = win32file.ReadFile(h_pipe, 4096)
             cmd_str = data.decode('utf-8').strip()
             print(f"[*] Received command: {cmd_str}")
@@ -110,8 +120,8 @@ class FaceDaemon:
                     "user": self.profile["username"] if has_prof else None
                 }
             elif cmd_str == "VERIFY":
-                print("[*] Performing face verification...")
-                response = self.verify_current_face(timeout_sec=4.0)
+                print("[*] Performing face verification with smooth HUD...")
+                response = self.verify_current_face(timeout_sec=4.5)
                 print(f"[*] Verification result: {response}")
             else:
                 response = {"status": "unknown_command"}
@@ -125,13 +135,11 @@ class FaceDaemon:
 
     def run_server(self):
         print(f"[*] Windows Hello Refined Service active on {PIPE_NAME}")
-        # Warm up camera once at startup so driver is initialized
         self.ensure_camera()
-        time.sleep(0.5)
-        print("[*] Camera warmed up and ready.")
+        time.sleep(0.3)
+        print("[*] Camera pre-warmed. Waiting for lock-screen requests...")
 
         while True:
-            # Create Named Pipe for IPC
             h_pipe = win32pipe.CreateNamedPipe(
                 PIPE_NAME,
                 win32pipe.PIPE_ACCESS_DUPLEX,
@@ -144,10 +152,9 @@ class FaceDaemon:
             )
 
             try:
-                # Wait for LogonUI or client to connect
                 win32pipe.ConnectNamedPipe(h_pipe, None)
                 self.handle_client(h_pipe)
-            except Exception as e:
+            except Exception:
                 time.sleep(0.05)
             finally:
                 try:
@@ -157,5 +164,5 @@ class FaceDaemon:
 
 if __name__ == "__main__":
     idx = int(sys.argv[1]) if len(sys.argv) > 1 else 0
-    daemon = FaceDaemon(idx)
+    daemon = FaceDaemon(idx, show_hud=True)
     daemon.run_server()
