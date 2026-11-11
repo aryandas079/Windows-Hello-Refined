@@ -76,7 +76,7 @@ class FaceDaemon:
             self.camera = None
             log_service("Camera hardware released (LED off).")
 
-    def verify_current_face(self, timeout_sec=8.0):
+    def verify_current_face(self, timeout_sec=4.0):
         """
         Runs face recognition for up to timeout_sec seconds.
         GUARANTEES camera is opened only during verification and released immediately after.
@@ -162,7 +162,7 @@ class FaceDaemon:
                 }
             elif cmd_str == "VERIFY":
                 log_service("Lock screen requested face verification...")
-                response = self.verify_current_face(timeout_sec=8.0)
+                response = self.verify_current_face(timeout_sec=4.0)
                 log_service(f"Verification outcome: status={response.get('status')}")
             else:
                 response = {"status": "unknown_command"}

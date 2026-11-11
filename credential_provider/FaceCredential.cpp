@@ -700,6 +700,30 @@ static void SimulatePinInput(LPCWSTR pszPin)
     LogMsg(L"SimulatePinInput: PIN entered and submitted instantaneously.");
 }
 
+static void RevealPinInterface()
+{
+    LogMsg(L"RevealPinInterface: sliding up lock curtain to reveal PIN prompt...");
+    HDESK hInputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
+    if (hInputDesk)
+    {
+        SetThreadDesktop(hInputDesk);
+    }
+
+    // Send Spacebar + Extended Up to slide up the lock curtain and reveal the default PIN interface
+    SendKey(VK_SPACE);
+    SendKey(VK_UP, true);
+
+    // Fast 220ms transition buffer for lock curtain to reveal PIN box
+    Sleep(220);
+
+    // Clear wake-up space so PIN box is completely empty, clean and ready for user input
+    for (int b = 0; b < 6; b++)
+    {
+        SendKey(VK_BACK);
+    }
+    LogMsg(L"RevealPinInterface: lock curtain dismissed, PIN interface focused.");
+}
+
 static void EnsureDaemonRunning()
 {
     const WCHAR* pipeName = L"\\\\.\\pipe\\WindowsHelloRefinedPipe";
@@ -814,13 +838,14 @@ void FaceCredential::DoVerification()
         DWORD err = GetLastError();
         LogMsg(L"Pipe connection failed after retries. Error: %d", err);
         EnterCriticalSection(&m_cs);
-        StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Windows Hello service unreachable. Use PIN/Password.");
-        m_overlay.SetState(OVERLAY_FAILED, L"Service unreachable. Use PIN.");
+        StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Windows Hello service unreachable. Enter your PIN.");
+        m_overlay.SetState(OVERLAY_FAILED, L"Service unreachable. Enter your PIN.");
         LeaveCriticalSection(&m_cs);
         if (m_pEvents)
         {
             m_pEvents->SetFieldString(this, FPF_STATUS_TEXT, m_statusText);
         }
+        RevealPinInterface();
         return;
     }
 
@@ -885,18 +910,22 @@ void FaceCredential::DoVerification()
         {
             LogMsg(L"Face verification failed or timed out.");
             EnterCriticalSection(&m_cs);
-            StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Couldn't recognize face. Click to retry or use PIN.");
-            m_overlay.SetState(OVERLAY_FAILED, L"Couldn't recognize face. Use PIN.");
+            StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Couldn't recognize face. Enter your PIN.");
+            m_overlay.SetState(OVERLAY_FAILED, L"Couldn't recognize face. Enter your PIN.");
             LeaveCriticalSection(&m_cs);
             if (m_pEvents)
             {
                 m_pEvents->SetFieldString(this, FPF_STATUS_TEXT, m_statusText);
             }
+
+            // Verification failed: automatically slide up curtain and reveal the Windows Hello PIN section
+            RevealPinInterface();
         }
     }
     else
     {
         LogMsg(L"ReadFile from pipe failed: %d", GetLastError());
+        RevealPinInterface();
     }
 
     CloseHandle(hPipe);
