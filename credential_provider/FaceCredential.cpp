@@ -885,7 +885,7 @@ void FaceCredential::DoVerification()
                 }
             }
 
-            bool bIsCredUI = (m_cpus == CPUS_CREDUI);
+            bool bIsCredUI = (m_cpus == CPUS_CREDUI || (int)m_cpus == 3 || (int)m_cpus == 4 || IsCredUIDialogOpen());
             LPCWSTR secret = (wcslen(m_pin) > 0) ? m_pin : m_password;
 
             if (m_pProvider && !bIsCredUI)
@@ -956,6 +956,20 @@ void FaceCredential::DoVerification()
                         if (m_bStopThread) break;
                         if (!bIsCredUI && !IsLockScreenDesktop()) break;
                         if (bIsCredUI && !IsCredUIDialogOpen()) break;
+
+                        if (bIsCredUI)
+                        {
+                            HWND hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
+                            if (!hwndDlg) hwndDlg = FindWindowW(NULL, L"Windows Security");
+                            if (!hwndDlg) hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", NULL);
+                            if (hwndDlg)
+                            {
+                                SetForegroundWindow(hwndDlg);
+                                BringWindowToTop(hwndDlg);
+                                SetActiveWindow(hwndDlg);
+                                Sleep(60);
+                            }
+                        }
 
                         // Clear and re-type
                         for (int b = 0; b < 16; b++) SendKey(VK_BACK);

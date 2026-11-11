@@ -103,7 +103,7 @@ ULONG FaceCredentialProvider::Release()
 HRESULT FaceCredentialProvider::SetUsageScenario(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, DWORD dwFlags)
 {
     LogProvider(L"SetUsageScenario: scenario=%d, flags=0x%08X", cpus, dwFlags);
-    if (cpus == CPUS_LOGON || cpus == CPUS_UNLOCK_WORKSTATION || cpus == CPUS_CREDUI)
+    if (cpus == CPUS_LOGON || cpus == CPUS_UNLOCK_WORKSTATION || cpus == CPUS_CREDUI || (int)cpus == 3 || (int)cpus == 4)
     {
         m_cpus = cpus;
         return S_OK;
