@@ -11,7 +11,7 @@ It integrates directly into the genuine **Windows Lock Screen (`LogonUI.exe`)** 
 
 ---
 
-## 🛠️ Built With
+## Built With
 
 The project combines low-level Windows operating system internals with modern deep learning and computer vision:
 
@@ -29,7 +29,7 @@ The project combines low-level Windows operating system internals with modern de
 
 ---
 
-## ✨ Key Features
+## Key Features
 
 - **Standard RGB Camera Support**: Works on 720p/1080p laptop webcams and USB cameras without infrared.
 - **Native Lock Screen Animation**: Official Windows Hello-style animated gazing eye appears at the top center of the lock screen from the very beginning.
@@ -42,7 +42,7 @@ The project combines low-level Windows operating system internals with modern de
 
 ---
 
-## 📋 Prerequisites
+## Prerequisites
 
 - **Operating System**: Windows 10 (64-bit) or Windows 11 (64-bit).
 - **Camera**: Standard built-in webcam or external USB webcam (Index `0`).
@@ -51,7 +51,7 @@ The project combines low-level Windows operating system internals with modern de
 
 ---
 
-## 🚀 Setup & Installation Guide
+## Setup & Installation Guide
 
 ### Step 1: Clone the Repository
 ```powershell
@@ -111,7 +111,7 @@ You will receive a confirmation dialog: `DllRegisterServer in ...FaceCredentialP
 
 ---
 
-## 🎮 How to Use
+## How to Use
 
 ### 1. Interactive CLI Manager
 You can manage the entire application through the unified interactive manager:
@@ -169,7 +169,7 @@ You should see:
 
 ---
 
-## 🔄 Automatic Startup on Windows Boot
+## Automatic Startup on Windows Boot
 
 To have the Face ID daemon run automatically in the background whenever you log in:
 
@@ -192,7 +192,7 @@ Start in: "D:\Projects_New\Windows Hello Refined"
 
 ---
 
-## 🛡️ Security & Privacy Architecture
+## Security & Privacy Architecture
 
 ```mermaid
 flowchart TD
@@ -218,7 +218,7 @@ flowchart TD
 
 ---
 
-## 📁 Directory Structure
+## Directory Structure
 
 ```
 Windows Hello Refined/
@@ -253,7 +253,7 @@ Windows Hello Refined/
 
 ---
 
-## 🔧 Diagnostic Logging & Troubleshooting
+## Diagnostic Logging & Troubleshooting
 
 ### Real-Time Logs
 Windows Credential Provider actions are logged directly to:
@@ -282,5 +282,5 @@ Windows will instantly restore default sign-in options without a reboot.
 
 ---
 
-## 📄 License
+## License
 This project is open-source under the MIT License.
