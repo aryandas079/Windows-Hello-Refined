@@ -4,6 +4,8 @@
 
 #pragma comment(lib, "shlwapi.lib")
 
+extern HINSTANCE g_hInst;
+
 FaceCredential::FaceCredential() :
     m_cRef(1),
     m_cpus(CPUS_INVALID),
@@ -135,6 +137,17 @@ DWORD WINAPI FaceCredential::VerificationThread(LPVOID lpParam)
     return 0;
 }
 
+static HBITMAP LoadAssetBitmap(LPCWSTR filename)
+{
+    WCHAR bmpPath[MAX_PATH] = {0};
+    GetModuleFileNameW(g_hInst, bmpPath, ARRAYSIZE(bmpPath));
+    PathRemoveFileSpecW(bmpPath);
+    PathAppendW(bmpPath, L"..\\assets");
+    PathAppendW(bmpPath, filename);
+
+    return (HBITMAP)LoadImageW(NULL, bmpPath, IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
+}
+
 void FaceCredential::DoVerification()
 {
     const WCHAR* pipeName = L"\\\\.\\pipe\\WindowsHelloRefinedPipe";
@@ -193,6 +206,13 @@ void FaceCredential::DoVerification()
             {
                 m_pEvents->SetFieldString(this, FPF_STATUS_TEXT, m_statusText);
                 m_pEvents->SetFieldState(this, FPF_SUBMIT_BUTTON, CPFS_DISPLAY_IN_SELECTED_TILE);
+
+                // Update icon to official winking smiley
+                HBITMAP hbmpWink = LoadAssetBitmap(L"hello_wink.bmp");
+                if (hbmpWink)
+                {
+                    m_pEvents->SetFieldBitmap(this, FPF_LOGO, hbmpWink);
+                }
             }
 
             if (m_pProvider)
@@ -217,7 +237,6 @@ void FaceCredential::DoVerification()
 
 HRESULT FaceCredential::SetSelected(BOOL* pbAutoLogon)
 {
-    // Enable auto logon when verified
     if (pbAutoLogon) *pbAutoLogon = m_bVerified;
     StartVerification();
     return S_OK;
@@ -282,6 +301,13 @@ HRESULT FaceCredential::GetBitmapValue(DWORD dwFieldID, HBITMAP* phbmp)
 {
     if (!phbmp) return E_POINTER;
     *phbmp = NULL;
+
+    if (dwFieldID == FPF_LOGO)
+    {
+        // Load official Windows Hello face bitmap
+        *phbmp = LoadAssetBitmap(m_bVerified ? L"hello_wink.bmp" : L"hello_normal.bmp");
+        return S_OK;
+    }
     return S_OK;
 }
 
