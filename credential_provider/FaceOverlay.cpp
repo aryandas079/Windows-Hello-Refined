@@ -206,6 +206,13 @@ void FaceOverlay::RunAnimation()
 
     while (m_bRunning)
     {
+        MSG msg;
+        while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+
         EnterCriticalSection(&m_cs);
         OVERLAY_STATE curState = m_state;
         DWORD now = GetTickCount();

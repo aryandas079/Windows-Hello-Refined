@@ -331,15 +331,22 @@ DWORD WINAPI FaceCredential::VerificationThread(LPVOID lpParam)
 
 static HBITMAP CreatePARGBDIB(int width, int height, void** ppvBits)
 {
-    BITMAPINFO bmi = {0};
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = width;
-    bmi.bmiHeader.biHeight = height; // Bottom-up standard DIB (positive height)
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-    bmi.bmiHeader.biCompression = BI_RGB;
+    BITMAPV5HEADER bi = {0};
+    bi.bV5Size = sizeof(BITMAPV5HEADER);
+    bi.bV5Width = width;
+    bi.bV5Height = height; // Bottom-up standard DIB (positive height)
+    bi.bV5Planes = 1;
+    bi.bV5BitCount = 32;
+    bi.bV5Compression = BI_BITFIELDS;
+    bi.bV5RedMask   = 0x00FF0000;
+    bi.bV5GreenMask = 0x0000FF00;
+    bi.bV5BlueMask  = 0x000000FF;
+    bi.bV5AlphaMask = 0xFF000000;
 
-    return CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, ppvBits, NULL, 0);
+    HDC hdc = GetDC(NULL);
+    HBITMAP hBitmap = CreateDIBSection(hdc, (BITMAPINFO*)&bi, DIB_RGB_COLORS, ppvBits, NULL, 0);
+    ReleaseDC(NULL, hdc);
+    return hBitmap;
 }
 
 static HRESULT GetAssetBitmapBuffer(LPCWSTR filename, DWORD* pImageBufferSize, BYTE** ppImageBuffer)
@@ -403,7 +410,7 @@ static HRESULT GetAssetBitmapBuffer(LPCWSTR filename, DWORD* pImageBufferSize, B
     }
 
     DWORD dwBmpSize = w * h * 4;
-    DWORD dwcbFullSize = sizeof(BITMAPINFOHEADER) + dwBmpSize;
+    DWORD dwcbFullSize = sizeof(BITMAPV5HEADER) + dwBmpSize;
     BYTE* pBuffer = (BYTE*)CoTaskMemAlloc(dwcbFullSize);
     if (!pBuffer)
     {
@@ -412,15 +419,19 @@ static HRESULT GetAssetBitmapBuffer(LPCWSTR filename, DWORD* pImageBufferSize, B
     }
 
     ZeroMemory(pBuffer, dwcbFullSize);
-    BITMAPINFO* pBmi = (BITMAPINFO*)pBuffer;
-    pBmi->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    pBmi->bmiHeader.biWidth = w;
-    pBmi->bmiHeader.biHeight = h; // Bottom-up standard DIB
-    pBmi->bmiHeader.biPlanes = 1;
-    pBmi->bmiHeader.biBitCount = 32;
-    pBmi->bmiHeader.biCompression = BI_RGB;
+    BITMAPV5HEADER* pBmi = (BITMAPV5HEADER*)pBuffer;
+    pBmi->bV5Size = sizeof(BITMAPV5HEADER);
+    pBmi->bV5Width = w;
+    pBmi->bV5Height = h; // Bottom-up standard DIB
+    pBmi->bV5Planes = 1;
+    pBmi->bV5BitCount = 32;
+    pBmi->bV5Compression = BI_BITFIELDS;
+    pBmi->bV5RedMask   = 0x00FF0000;
+    pBmi->bV5GreenMask = 0x0000FF00;
+    pBmi->bV5BlueMask  = 0x000000FF;
+    pBmi->bV5AlphaMask = 0xFF000000;
 
-    BYTE* pDstPixels = pBuffer + sizeof(BITMAPINFOHEADER);
+    BYTE* pDstPixels = pBuffer + sizeof(BITMAPV5HEADER);
     Gdiplus::BitmapData bmpData;
     Gdiplus::Rect rect(0, 0, w, h);
 
@@ -578,7 +589,6 @@ static void SimulatePinInput(LPCWSTR pszPin)
     if (hInputDesk)
     {
         SetThreadDesktop(hInputDesk);
-        CloseDesktop(hInputDesk);
     }
 
     // Step 1: Send VK_UP to dismiss lock curtain if wallpaper is currently showing
