@@ -212,6 +212,9 @@ void FaceCredential::Initialize(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, FaceCre
         m_pszUserSid = QueryActiveSessionUserSid();
         LogMsg(L"Initialize: queried active session SID = %s", m_pszUserSid ? m_pszUserSid : L"NULL");
     }
+
+    LogMsg(L"Initialize: starting Windows Hello verification and animation from the very beginning!");
+    StartVerification();
 }
 
 HRESULT FaceCredential::QueryInterface(REFIID riid, void** ppv)
