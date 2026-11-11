@@ -118,10 +118,10 @@ class FaceDaemon:
 
                     # Adaptive low-light preprocessing (gamma boost + CLAHE)
                     enhanced = self.engine.preprocess_lighting(frame)
-                    face, status = self.engine.detect_face(enhanced)
+                    face, status = self.engine.detect_face(frame)
 
                     if face is not None:
-                        is_live, lscore, live_msg = self.engine.check_liveness(frame, face)
+                        is_live, lscore, live_msg = self.engine.check_liveness(frame, face, enhanced=enhanced)
                         feature = self.engine.extract_features(enhanced, face)
                         is_match, similarity = self.engine.match_face(feature, enrolled)
 

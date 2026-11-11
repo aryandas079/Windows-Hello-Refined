@@ -57,18 +57,22 @@ def run_live_test(camera_index=0):
 
             # Preprocess lighting if needed
             enhanced = engine.preprocess_lighting(frame)
-            face, status_msg = engine.detect_face(enhanced)
+            face, status_msg = engine.detect_face(frame)
 
             status_text = "Looking for face..."
             status_color = (180, 180, 180)
             score_text = ""
 
             if face is not None:
-                is_live, live_score, live_msg = engine.check_liveness(frame, face)
+                is_live, live_score, live_msg = engine.check_liveness(frame, face, enhanced=enhanced)
                 x, y, fw, fh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
 
                 if not is_live:
-                    if "blink" in live_msg.lower():
+                    if "analyzing" in live_msg.lower() or "gathering" in live_msg.lower():
+                        status_text = "VERIFYING BIOMETRICS... LOOK AT CAMERA"
+                        status_color = (0, 215, 255)  # Bright Gold / Yellow
+                        score_text = f"Liveness: {live_score * 100:.1f}% | {live_msg}"
+                    elif "blink" in live_msg.lower():
                         status_text = "LOOKING FOR YOU... PLEASE BLINK TO UNLOCK"
                         status_color = (0, 215, 255)  # Bright Gold / Yellow
                         score_text = f"Liveness: {live_score * 100:.1f}% | Waiting for genuine blink..."

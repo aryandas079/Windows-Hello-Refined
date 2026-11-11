@@ -169,6 +169,8 @@ class FaceEngine:
         self._ear_values = deque(maxlen=25)
         self._blink_history = deque(maxlen=25)
         self._blendshape_history = deque(maxlen=25)
+        self._iris_history = deque(maxlen=25)
+        self._geom_history = deque(maxlen=25)
 
     # ------------------------------------------------------------------
     # Low-light preprocessing
@@ -208,54 +210,59 @@ class FaceEngine:
 
         return cv2.cvtColor(cv2.merge((l_enh, a, b)), cv2.COLOR_LAB2BGR)
 
-    def check_screen_bezel(self, frame, face):
+    def check_screen_bezel(self, frame, face, enhanced=None):
         """
         Detects digital screen frames and mobile phone bezels.
         Examines margins surrounding the face for symmetric parallel vertical
         chassis lines flanking both sides of the face (characteristic of handheld phones/tablets).
+        Evaluates both raw and contrast-enhanced frames to ensure detection in dark rooms.
         """
-        H, W = frame.shape[:2]
-        fx, fy, fw, fh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
-        pad_x = int(fw * 0.90)
-        pad_y = int(fh * 0.60)
-        bx1 = max(0, fx - pad_x)
-        by1 = max(0, fy - pad_y)
-        bx2 = min(W, fx + fw + pad_x)
-        by2 = min(H, fy + fh + pad_y)
+        frames_to_test = [frame]
+        if enhanced is not None:
+            frames_to_test.append(enhanced)
 
-        if bx2 - bx1 < 60 or by2 - by1 < 60:
-            return False
+        for f_cand in frames_to_test:
+            H, W = f_cand.shape[:2]
+            fx, fy, fw, fh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
+            pad_x = int(fw * 0.95)
+            pad_y = int(fh * 0.65)
+            bx1 = max(0, fx - pad_x)
+            by1 = max(0, fy - pad_y)
+            bx2 = min(W, fx + fw + pad_x)
+            by2 = min(H, fy + fh + pad_y)
 
-        surround = frame[by1:by2, bx1:bx2]
-        gray = cv2.cvtColor(surround, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(blurred, 60, 180)
+            if bx2 - bx1 < 60 or by2 - by1 < 60:
+                continue
 
-        min_line_len = int(fh * 0.55)
-        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=75, minLineLength=min_line_len, maxLineGap=15)
-        if lines is None:
-            return False
+            surround = f_cand[by1:by2, bx1:bx2]
+            gray = cv2.cvtColor(surround, cv2.COLOR_BGR2GRAY)
+            blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+            edges = cv2.Canny(blurred, 50, 160)
 
-        fc_x1 = fx - bx1
-        fc_x2 = fc_x1 + fw
+            min_line_len = int(fh * 0.45)
+            lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=55, minLineLength=min_line_len, maxLineGap=15)
+            if lines is None:
+                continue
 
-        left_bezels = []
-        right_bezels = []
+            fc_x1 = fx - bx1
+            fc_x2 = fc_x1 + fw
 
-        for x1, y1, x2, y2 in lines.reshape(-1, 4):
-            angle = np.abs(np.arctan2(y2 - y1, x2 - x1) * 180.0 / np.pi)
-            if 80.0 <= angle <= 100.0:
-                avg_x = (x1 + x2) / 2.0
-                if avg_x < fc_x1 - 12:
-                    left_bezels.append(fc_x1 - avg_x)
-                elif avg_x > fc_x2 + 12:
-                    right_bezels.append(avg_x - fc_x2)
+            left_bezels = []
+            right_bezels = []
 
-        # Phone chassis has narrow vertical borders flanking both sides of the face
-        for dl in left_bezels:
-            for dr in right_bezels:
-                if abs(dl - dr) < fw * 0.40 and dl < fw * 0.90 and dr < fw * 0.90:
-                    return True
+            for x1, y1, x2, y2 in lines.reshape(-1, 4):
+                angle = np.abs(np.arctan2(y2 - y1, x2 - x1) * 180.0 / np.pi)
+                if 70.0 <= angle <= 110.0:
+                    avg_x = (x1 + x2) / 2.0
+                    if avg_x < fc_x1 - 10:
+                        left_bezels.append(fc_x1 - avg_x)
+                    elif avg_x > fc_x2 + 10:
+                        right_bezels.append(avg_x - fc_x2)
+
+            for dl in left_bezels:
+                for dr in right_bezels:
+                    if abs(dl - dr) < fw * 0.45 and dl < fw * 0.95 and dr < fw * 0.95:
+                        return True
 
         return False
 
@@ -282,7 +289,7 @@ class FaceEngine:
         lf_energy = float(np.mean(magnitude[~high_freq_mask]))
         ratio = hf_energy / (lf_energy + 1e-6)
 
-        is_screen = (ratio > 0.82)
+        is_screen = (ratio > 0.765)
         return is_screen, ratio
 
     # ------------------------------------------------------------------
@@ -291,12 +298,16 @@ class FaceEngine:
 
     def detect_face(self, frame):
         """
-        Detects the primary face using YuNet.
+        Detects the primary face using YuNet with dual-pass low-light recovery.
         Returns (face [15 floats], status_msg) or (None, msg).
         """
         h, w = frame.shape[:2]
         self.detector.setInputSize((w, h))
         _, faces = self.detector.detect(frame)
+
+        if faces is None or len(faces) == 0:
+            enh = self.preprocess_lighting(frame)
+            _, faces = self.detector.detect(enh)
 
         if faces is None or len(faces) == 0:
             return None, "No face detected"
@@ -333,17 +344,23 @@ class FaceEngine:
     # Liveness detection
     # ------------------------------------------------------------------
 
-    def check_liveness(self, frame, face):
+    def check_liveness(self, frame, face, enhanced=None):
         """
         Multi-layer biometric anti-spoofing and liveness detection:
-        Layer 1 : Laplacian texture frequency & screen moire raster bounds
-        Layer 2 : Biological hemoglobin spectral absorption (skin B/R ratio vs display backlight)
-        Layer 3 : YCrCb color-space chrominance gamut (print / display saturation)
-        Layer 4 : Local Binary Pattern (LBP) micro-texture analysis (skin micropores vs paper)
-        Layer 5 : Specular highlight asymmetry (3D curved skin vs flat phone screen glass)
-        Layer 6 : MediaPipe 478 3D landmark depth curvature (Z-axis anatomical profile)
-        Layer 7 : Directional gradient / moire pattern detection (LCD/OLED subpixel matrix)
-        Layer 8 : Temporal EAR dynamics, micro-tremor, and blink verification (rejects static photos)
+        Layer 0 : Screen bezel & mobile phone chassis detection (evaluates raw & enhanced)
+        Layer 1 : Laplacian texture frequency & screen pixel raster bounds (rejects > 420.0)
+        Layer 2 : 2D FFT periodic subpixel frequency grid (rejects > 0.765)
+        Layer 3 : YCrCb color-space chrominance gamut (rejects cr > 26.0 or cb > 21.0)
+        Layer 4 : Specular highlight screen glass reflection (rejects pixels > 235 count > 55)
+        Layer 5 : Biological hemoglobin spectral reflectance (B/R absorption ratio vs blue OLED emitter)
+        Layer 6 : Local Binary Pattern (LBP) micro-texture analysis
+        Layer 7 : MediaPipe 478 3D landmark depth curvature & registration
+        Layer 8 : Multi-frame physiological micro-movement & ocular micro-saccades verification:
+                  - Eye pupil / iris horizontal relative gaze tremor
+                  - Eye Aspect Ratio (EAR) micro-tremor
+                  - 52 MediaPipe blendshape micro-expressions
+                  - 3D perspective geometric non-rigidity (rejects 2D planar rigid photo movement)
+                  - Natural blink detection
 
         Returns: (is_live: bool, liveness_score: float, message: str)
         """
@@ -359,32 +376,20 @@ class FaceEngine:
         gray_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
 
         # Layer 0: Screen bezel / mobile phone chassis detection
-        if self.check_screen_bezel(frame, face):
-            return False, 0.08, "Digital screen / phone bezel detected (phone spoof)"
+        if self.check_screen_bezel(frame, face, enhanced=enhanced):
+            return False, 0.05, "Digital screen / phone bezel detected (phone spoof)"
 
         # Layer 1: Laplacian texture frequency & screen pixel raster bounds
         lap_var = float(cv2.Laplacian(gray_roi, cv2.CV_64F).var())
         if lap_var < 15.0:
             return False, 0.10, "Extreme blur or flat surface detected"
-        if lap_var > 550.0:
-            return False, 0.10, "Digital screen subpixel raster / moire detected (phone spoof)"
+        if lap_var > 420.0:
+            return False, 0.08, "Digital screen subpixel raster / moire detected (phone spoof)"
 
-        # 2D FFT periodic subpixel frequency check (detects OLED/LCD screen grids)
+        # Layer 2: 2D FFT periodic subpixel frequency check (detects OLED/LCD screen grids)
         is_raster, r_ratio = self.check_screen_frequency(gray_roi)
         if is_raster:
-            return False, 0.10, "Display subpixel raster grid detected (screen spoof)"
-
-        # Layer 2: Biological hemoglobin spectral reflectance (B/R absorption ratio)
-        # Real living human tissue exhibits deep capillary red reflectance (B/R < 0.90).
-        # Mobile phone displays (OLED/LCD) emit heavy 450nm blue light (B/R >= 0.94).
-        h_roi, w_roi = face_roi.shape[:2]
-        skin_sample = face_roi[int(h_roi * 0.30):int(h_roi * 0.75), int(w_roi * 0.25):int(w_roi * 0.75)]
-        if skin_sample.size > 0:
-            mean_bgr = np.mean(skin_sample, axis=(0, 1))
-            b_val, g_val, r_val = float(mean_bgr[0]), float(mean_bgr[1]), float(mean_bgr[2])
-            br_ratio = b_val / (r_val + 1e-6)
-            if br_ratio > 0.93 and r_val > 65.0:
-                return False, 0.10, "Digital display backlight / blue emitter detected (phone spoof)"
+            return False, 0.08, "Display subpixel raster grid detected (screen spoof)"
 
         # Layer 3: YCrCb color chrominance distribution & display gamut
         ycrcb = cv2.cvtColor(face_roi, cv2.COLOR_BGR2YCrCb)
@@ -392,103 +397,136 @@ class FaceEngine:
         cr_std = float(np.std(cr))
         cb_std = float(np.std(cb))
         if cr_std < 0.8 or cb_std < 0.8:
-            return False, 0.15, "Abnormal color compression (monochrome or cheap print)"
-        if cr_std > 27.0 or cb_std > 23.0:
-            return False, 0.12, "Unnatural digital screen saturation / display gamut detected"
+            return False, 0.10, "Abnormal color compression (monochrome or cheap print)"
+        if cr_std > 26.0 or cb_std > 21.0:
+            return False, 0.08, "Unnatural digital screen saturation / display gamut detected (phone spoof)"
 
-        # Layer 4: LBP micro-texture entropy
+        # Layer 4: Specular highlight on screen glass (flat glass mirror reflection)
+        specular_count = int(np.sum(gray_roi > 235))
+        if specular_count > 55:
+            return False, 0.08, "Flat screen glass reflection detected (phone spoof)"
+
+        # Layer 5: Biological hemoglobin spectral reflectance (B/R absorption ratio)
+        h_roi, w_roi = face_roi.shape[:2]
+        skin_sample = face_roi[int(h_roi * 0.30):int(h_roi * 0.75), int(w_roi * 0.25):int(w_roi * 0.75)]
+        if skin_sample.size > 0:
+            mean_bgr = np.mean(skin_sample, axis=(0, 1))
+            b_val, g_val, r_val = float(mean_bgr[0]), float(mean_bgr[1]), float(mean_bgr[2])
+            br_ratio = b_val / (r_val + 1e-6)
+            if br_ratio > 0.93 and r_val > 65.0:
+                return False, 0.08, "Digital display backlight / blue emitter detected (phone spoof)"
+
+        # Layer 6: LBP micro-texture entropy
         lbp_hist = _lbp_histogram(gray_roi)
         lbp_entropy = -float(np.sum(lbp_hist * np.log2(lbp_hist + 1e-10)))
         if lbp_entropy < 4.4:
             return False, lbp_entropy / 8.0, "LBP micro-texture too uniform (possible photo)"
 
-        # Layer 5: Specular highlight asymmetry (flat glass vs 3D curved face)
-        _, thresh = cv2.threshold(gray_roi, 220, 255, cv2.THRESH_BINARY)
-        highlight_total = float(np.sum(thresh > 0))
-        if highlight_total > 160:
-            half_w = gray_roi.shape[1] // 2
-            left_h  = float(np.sum(thresh[:, :half_w] > 0))
-            right_h = float(np.sum(thresh[:, half_w:] > 0))
-            sym = min(left_h, right_h) / (max(left_h, right_h) + 1e-6)
-            if sym > 0.93:
-                return False, 0.12, "Flat screen glass reflection detected"
-
-        # Layer 6: MediaPipe 478 3D landmark depth curvature
+        # Layer 7: MediaPipe 478 3D landmark depth curvature
         landmarks, blendshapes = self.get_face_landmarks_478(frame)
         if landmarks is None or len(landmarks) < 468:
             # Fallback to enhanced frame if room lighting is dim
-            enh = self.preprocess_lighting(frame)
+            enh = enhanced if enhanced is not None else self.preprocess_lighting(frame)
             landmarks, blendshapes = self.get_face_landmarks_478(enh)
 
         if landmarks is None or len(landmarks) < 468:
-            return False, 0.20, "MediaPipe 478 landmarks not registered"
+            return False, 0.15, "MediaPipe 478 landmarks not registered"
 
         zs = [lm.z for lm in landmarks]
         z_span = float(max(zs) - min(zs))
         if z_span < 0.08:
             return False, 0.15, "Lack of 3D facial depth (possible flat photo)"
 
-        # Layer 7: Directional gradient / moire pattern detection
-        blurred = cv2.GaussianBlur(gray_roi, (15, 15), 0)
-        sobelx_std = float(np.std(cv2.Sobel(blurred, cv2.CV_64F, 1, 0, ksize=3)))
-        sobely_std = float(np.std(cv2.Sobel(blurred, cv2.CV_64F, 0, 1, ksize=3)))
-        max_grad = max(sobelx_std, sobely_std)
-        grad_ratio = min(sobelx_std, sobely_std) / (max_grad + 1e-6)
-        if grad_ratio < 0.04 and max_grad > 55.0:
-            return False, 0.12, "Moire / screen raster scanlines detected"
-
-        # Layer 8: Temporal EAR dynamics, micro-movement, and blink detection
-        blink_verified = False
+        # Layer 8: Multi-frame physiological micro-movement & ocular micro-saccades
         ear_l = _ear(landmarks, _LEFT_EYE_UPPER,  _LEFT_EYE_LOWER,  _LEFT_EYE_CORNERS)
         ear_r = _ear(landmarks, _RIGHT_EYE_UPPER, _RIGHT_EYE_LOWER, _RIGHT_EYE_CORNERS)
         ear_val = float((ear_l + ear_r) / 2.0)
-
         self._ear_values.append(ear_val)
 
-        # Track blendshape eye/brow values if available
-        bs_eye = 0.0
+        # Iris horizontal gaze ratio
+        ir_l = float((landmarks[468].x - landmarks[33].x) / (landmarks[133].x - landmarks[33].x + 1e-6))
+        ir_r = float((landmarks[473].x - landmarks[362].x) / (landmarks[263].x - landmarks[362].x + 1e-6))
+        iris_val = (ir_l + ir_r) / 2.0
+        self._iris_history.append(iris_val)
+
+        # 3D perspective non-rigidity (eye distance vs nose-chin distance)
+        d_eyes = np.linalg.norm(np.array([landmarks[33].x, landmarks[33].y]) - np.array([landmarks[263].x, landmarks[263].y]))
+        d_nc   = np.linalg.norm(np.array([landmarks[1].x, landmarks[1].y]) - np.array([landmarks[152].x, landmarks[152].y]))
+        geom_val = float(d_eyes / (d_nc + 1e-6))
+        self._geom_history.append(geom_val)
+
+        # Blendshapes tracking
+        bs_val = 0.0
         if blendshapes:
             bs_dict = {b.category_name: b.score for b in blendshapes}
-            bs_eye = float((bs_dict.get('eyeBlinkLeft', 0.0) + bs_dict.get('eyeBlinkRight', 0.0)) / 2.0)
-            self._blendshape_history.append(bs_eye)
+            bs_val = float(
+                (bs_dict.get('eyeBlinkLeft', 0.0) + bs_dict.get('eyeBlinkRight', 0.0)) / 2.0 +
+                (bs_dict.get('eyeLookInLeft', 0.0) + bs_dict.get('eyeLookOutLeft', 0.0)) / 4.0
+            )
+            self._blendshape_history.append(bs_val)
 
-        # Genuine living blink detection (instant bonus verification):
-        if len(self._ear_values) >= 3:
-            ear_min = min(self._ear_values)
-            ear_max = max(self._ear_values)
+        # Evaluate temporal biological traits:
+        if len(self._ear_values) < 3:
+            dynamic_score = 0.15
+            dynamic_msg = "Analyzing physiological micro-movement..."
+        else:
+            ear_min, ear_max = min(self._ear_values), max(self._ear_values)
             ear_span = ear_max - ear_min
+            ear_std = float(np.std(self._ear_values))
+            iris_span = max(self._iris_history) - min(self._iris_history)
+            bs_span = (max(self._blendshape_history) - min(self._blendshape_history)) if self._blendshape_history else 0.0
+            geom_std = float(np.std(self._geom_history)) if len(self._geom_history) >= 3 else 0.0
 
-            bs_span = 0.0
-            if len(self._blendshape_history) >= 3:
-                bs_span = max(self._blendshape_history) - min(self._blendshape_history)
+            is_blink = (ear_span >= 0.060 and ear_min < 0.20 and ear_max > 0.24) or (bs_span >= 0.30)
+            is_ocular = (iris_span >= 0.0030)
+            is_tremor = (ear_span >= 0.0045 or ear_std >= 0.0020)
+            is_expression = (bs_span >= 0.012)
+            is_parallax = (geom_std >= 0.0030)
 
-            if (ear_span >= 0.065 and ear_min < 0.20 and ear_max > 0.24) or (bs_span >= 0.35):
-                blink_verified = True
+            if is_blink:
+                dynamic_score = 1.0
+                dynamic_msg = "Blink verified"
+            elif is_ocular:
+                dynamic_score = 0.92
+                dynamic_msg = "Ocular micro-saccades verified"
+            elif is_tremor:
+                dynamic_score = 0.88
+                dynamic_msg = "Eyelid micro-tremor verified"
+            elif is_expression:
+                dynamic_score = 0.85
+                dynamic_msg = "Micro-expression verified"
+            elif is_parallax:
+                dynamic_score = 0.82
+                dynamic_msg = "3D parallax motion verified"
+            else:
+                dynamic_score = 0.08
+                dynamic_msg = "No physiological micro-movement"
 
-        dynamic_score = 1.0 if blink_verified else 0.80
+            if len(self._ear_values) >= 6 and dynamic_score <= 0.15:
+                return False, 0.10, "Static photo / motionless face detected (spoof)"
 
-        # Natural skin texture score: peaks in [80, 260], decays smoothly outside
+        # Texture and color component scores
         if lap_var <= 200.0:
             texture_score = min(1.0, max(0.0, (lap_var - 15.0) / 100.0))
         else:
-            texture_score = max(0.0, 1.0 - (lap_var - 200.0) / 350.0)
+            texture_score = max(0.0, 1.0 - (lap_var - 200.0) / 220.0)
 
-        color_score   = min(1.0, (cr_std + cb_std) / 22.0)
-        lbp_score     = min(1.0, max(0.0, (lbp_entropy - 4.2) / 3.0))
-        depth_score   = min(1.0, max(0.0, (z_span - 0.08) / 0.15))
+        color_score = min(1.0, (cr_std + cb_std) / 22.0)
+        lbp_score   = min(1.0, max(0.0, (lbp_entropy - 4.2) / 3.0))
+        depth_score = min(1.0, max(0.0, (z_span - 0.08) / 0.15))
 
         liveness_score = (
-            texture_score * 0.20 +
+            texture_score * 0.15 +
             color_score   * 0.15 +
-            lbp_score     * 0.20 +
-            depth_score   * 0.20 +
-            dynamic_score * 0.25
+            lbp_score     * 0.15 +
+            depth_score   * 0.15 +
+            dynamic_score * 0.40
         )
 
         if liveness_score < 0.65:
-            return False, liveness_score, f"Liveness check failed (score={liveness_score:.2f})"
+            return False, liveness_score, f"Liveness check failed ({dynamic_msg}, score={liveness_score:.2f})"
 
-        return True, liveness_score, "Live human verified"
+        return True, liveness_score, f"Live human verified ({dynamic_msg})"
 
     # ------------------------------------------------------------------
     # Embedding extraction and matching
@@ -559,7 +597,9 @@ class FaceEngine:
         return frame
 
     def reset_blink_history(self):
-        """Reset temporal liveness, EAR blink, and blendshape buffers between sessions."""
+        """Reset temporal liveness, EAR blink, iris, and blendshape buffers between sessions."""
         self._ear_values.clear()
         self._blink_history.clear()
         self._blendshape_history.clear()
+        self._iris_history.clear()
+        self._geom_history.clear()
