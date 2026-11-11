@@ -116,6 +116,7 @@ HRESULT FaceCredentialProvider::SetSerialization(const CREDENTIAL_PROVIDER_CREDE
 
 HRESULT FaceCredentialProvider::Advise(ICredentialProviderEvents* pcpe, UINT_PTR upAdviseContext)
 {
+    LogProvider(L"Advise called");
     if (m_pEvents)
     {
         m_pEvents->Release();
@@ -126,11 +127,22 @@ HRESULT FaceCredentialProvider::Advise(ICredentialProviderEvents* pcpe, UINT_PTR
     {
         m_pEvents->AddRef();
     }
+
+    if (!m_pCredential)
+    {
+        m_pCredential = new FaceCredential();
+        m_pCredential->Initialize(m_cpus, this, m_pszUserSid);
+    }
     return S_OK;
 }
 
 HRESULT FaceCredentialProvider::UnAdvise()
 {
+    LogProvider(L"UnAdvise called");
+    if (m_pCredential)
+    {
+        m_pCredential->UnAdvise();
+    }
     if (m_pEvents)
     {
         m_pEvents->Release();
@@ -177,6 +189,12 @@ HRESULT FaceCredentialProvider::SetUserArray(ICredentialProviderUserArray* users
         }
     }
 
+    if (!m_pCredential)
+    {
+        m_pCredential = new FaceCredential();
+        m_pCredential->Initialize(m_cpus, this, m_pszUserSid);
+    }
+
     return S_OK;
 }
 
@@ -213,21 +231,14 @@ HRESULT FaceCredentialProvider::GetCredentialCount(DWORD* pdwCount, DWORD* pdwDe
 {
     if (!pdwCount || !pdwDefault || !pbAutoLogonWithDefault) return E_POINTER;
 
-    // Provide 1 credential tile
-    *pdwCount = 1;
-    if (m_pCredential && m_pCredential->IsVerified() && m_pCredential->HasValidPassword())
-    {
-        *pdwDefault = 0;
-        *pbAutoLogonWithDefault = TRUE;
-    }
-    else
-    {
-        // NEVER steal default tile from Windows Hello PIN!
-        // Windows Hello PIN remains the primary sign-in tile at all times.
-        *pdwDefault = CREDENTIAL_PROVIDER_NO_DEFAULT;
-        *pbAutoLogonWithDefault = FALSE;
-    }
-    LogProvider(L"GetCredentialCount: count=1, default=%u, autoLogon=%d", *pdwDefault, *pbAutoLogonWithDefault);
+    // Return 0 so LogonUI does NOT show any tile under "Sign-in options".
+    // Windows Hello Face acts as an ambient biometric overlay on top of the
+    // default Windows Hello PIN unlock interface!
+    *pdwCount = 0;
+    *pdwDefault = CREDENTIAL_PROVIDER_NO_DEFAULT;
+    *pbAutoLogonWithDefault = FALSE;
+
+    LogProvider(L"GetCredentialCount: returning count=0 (Face runs as ambient overlay on top of Windows Hello PIN)");
     return S_OK;
 }
 
