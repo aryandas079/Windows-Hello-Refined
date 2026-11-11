@@ -78,12 +78,28 @@ private:
     long m_cRef;
 };
 
+static void EnsureNoLockScreenPolicy()
+{
+    // Ensure Windows skips the sliding lock screen curtain so Windows Hello
+    // is always immediately active and visible whenever the device wakes from sleep.
+    HKEY hKey = NULL;
+    if (RegCreateKeyExW(HKEY_LOCAL_MACHINE,
+                        L"SOFTWARE\\Policies\\Microsoft\\Windows\\Personalization",
+                        0, NULL, REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL, &hKey, NULL) == ERROR_SUCCESS)
+    {
+        DWORD val = 1;
+        RegSetValueExW(hKey, L"NoLockScreen", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
+        RegCloseKey(hKey);
+    }
+}
+
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
     if (fdwReason == DLL_PROCESS_ATTACH)
     {
         g_hInst = hinstDLL;
         DisableThreadLibraryCalls(hinstDLL);
+        EnsureNoLockScreenPolicy();
     }
     return TRUE;
 }

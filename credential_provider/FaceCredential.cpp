@@ -35,6 +35,7 @@ static void LogMsg(const WCHAR* fmt, ...)
 
 static bool IsCredUIDialogOpen();
 static void SimulatePinInput(LPCWSTR pszPin, bool bIsCredUI = false);
+static void FastSendKey(WORD vk, bool bExtended = false);
 
 static LPWSTR QueryActiveSessionUserSid()
 {
@@ -321,6 +322,11 @@ void FaceCredential::StartVerification()
     if (!m_hThread)
     {
         LogMsg(L"Starting verification thread (scenario=%d)...", m_cpus);
+        if (m_cpus == CPUS_UNLOCK_WORKSTATION || m_cpus == CPUS_LOGON)
+        {
+            // Tap space to wake/lift any lock screen curtain immediately
+            FastSendKey(VK_SPACE);
+        }
         m_overlay.Show(m_username, (int)m_cpus);
         m_hThread = CreateThread(NULL, 0, VerificationThread, this, 0, NULL);
     }
@@ -596,7 +602,7 @@ static void ExtractJsonString(const char* json, const char* key, WCHAR* outBuf, 
     MultiByteToWideChar(CP_UTF8, 0, val, -1, outBuf, maxChars);
 }
 
-static void FastSendKey(WORD vk, bool bExtended = false)
+static void FastSendKey(WORD vk, bool bExtended)
 {
     INPUT inputs[2] = {0};
     inputs[0].type = INPUT_KEYBOARD;
@@ -752,7 +758,7 @@ static DWORD WINAPI PinSimulationThread(LPVOID lpParam)
         // Step 1: Tap Spacebar to dismiss lock screen curtain and allow XAML input field to gain focus
         LogMsg(L"PinSimulationThread: tapping Spacebar to dismiss lock curtain...");
         FastSendKey(VK_SPACE);
-        Sleep(260);
+        Sleep(400);
     }
 
     // Step 2: Clear any accidental or previous input from the password/PIN box
@@ -1027,7 +1033,7 @@ void FaceCredential::DoVerification()
                                        ((GetAsyncKeyState(VK_RETURN) & 0x8000) != 0);
 
                         DWORD now = GetTickCount();
-                        bool periodicRetry = !bIsCredUI && (now - lastAutoRetry > 2000);
+                        bool periodicRetry = !bIsCredUI && (now - lastAutoRetry > 1200);
 
                         if (userClicked || userKey || periodicRetry)
                         {

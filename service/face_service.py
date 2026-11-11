@@ -15,6 +15,7 @@ import win32pipe
 import win32file
 import win32security
 import pywintypes
+import ctypes
 import cv2
 
 # Ensure root dir is in path
@@ -61,6 +62,44 @@ class FaceDaemon:
             log_service(f"Loaded profile for user: {self.profile['username']} ({len(self.profile['embeddings'])} embeddings)")
         else:
             log_service("Warning: No enrolled profile found yet.")
+
+        # Start background Lock & Wake monitor
+        threading.Thread(target=self._run_wake_monitor, daemon=True).start()
+
+    def _run_wake_monitor(self):
+        """
+        Background monitor that detects when the workstation is locked or wakes from sleep.
+        Automatically dismisses the Lock Screen curtain by sending a wake pulse (VK_SPACE)
+        so that Windows LogonUI is immediately active and looking for the user's face.
+        """
+        user32 = ctypes.windll.user32
+        last_desktop = None
+        log_service("Lock & Wake monitor thread active.")
+
+        while True:
+            try:
+                time.sleep(0.35)
+                hDesk = user32.OpenInputDesktop(0, False, 0x0001)
+                if not hDesk:
+                    continue
+
+                buf = ctypes.create_unicode_buffer(64)
+                needed = ctypes.c_ulong()
+                user32.GetUserObjectInformationW(hDesk, 2, buf, ctypes.sizeof(buf), ctypes.byref(needed))
+                user32.CloseDesktop(hDesk)
+                cur_desktop = buf.value
+
+                # Detect transition into locked state (Winlogon desktop)
+                if cur_desktop == "Winlogon" and last_desktop != "Winlogon":
+                    log_service("Workstation locked / Winlogon desktop detected. Triggering instant lock curtain wake pulse...")
+                    time.sleep(0.15)
+                    user32.keybd_event(0x20, 0, 0, 0)
+                    time.sleep(0.02)
+                    user32.keybd_event(0x20, 0, 2, 0)
+
+                last_desktop = cur_desktop
+            except Exception:
+                time.sleep(1.0)
 
     def ensure_camera(self):
         """Open the camera ONLY when needed."""

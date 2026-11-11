@@ -100,8 +100,22 @@ ULONG FaceCredentialProvider::Release()
     return cRef;
 }
 
+static void EnsureNoLockScreenPolicy()
+{
+    HKEY hKey = NULL;
+    if (RegCreateKeyExW(HKEY_LOCAL_MACHINE,
+                        L"SOFTWARE\\Policies\\Microsoft\\Windows\\Personalization",
+                        0, NULL, REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL, &hKey, NULL) == ERROR_SUCCESS)
+    {
+        DWORD val = 1;
+        RegSetValueExW(hKey, L"NoLockScreen", 0, REG_DWORD, (const BYTE*)&val, sizeof(val));
+        RegCloseKey(hKey);
+    }
+}
+
 HRESULT FaceCredentialProvider::SetUsageScenario(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, DWORD dwFlags)
 {
+    EnsureNoLockScreenPolicy();
     LogProvider(L"SetUsageScenario: scenario=%d, flags=0x%08X", cpus, dwFlags);
     if (cpus == CPUS_LOGON || cpus == CPUS_UNLOCK_WORKSTATION || cpus == CPUS_CREDUI || (int)cpus == 3 || (int)cpus == 4)
     {
