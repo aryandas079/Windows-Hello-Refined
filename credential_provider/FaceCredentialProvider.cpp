@@ -106,6 +106,11 @@ HRESULT FaceCredentialProvider::SetUsageScenario(CREDENTIAL_PROVIDER_USAGE_SCENA
     if (cpus == CPUS_LOGON || cpus == CPUS_UNLOCK_WORKSTATION || cpus == CPUS_CREDUI || (int)cpus == 3 || (int)cpus == 4)
     {
         m_cpus = cpus;
+        if (m_pCredential)
+        {
+            LogProvider(L"SetUsageScenario: re-arming StartVerification on existing credential...");
+            m_pCredential->StartVerification();
+        }
         return S_OK;
     }
     return E_NOTIMPL;
@@ -134,6 +139,11 @@ HRESULT FaceCredentialProvider::Advise(ICredentialProviderEvents* pcpe, UINT_PTR
     {
         m_pCredential = new FaceCredential();
         m_pCredential->Initialize(m_cpus, this, m_pszUserSid);
+    }
+    else
+    {
+        LogProvider(L"Advise: credential exists, re-arming StartVerification...");
+        m_pCredential->StartVerification();
     }
     return S_OK;
 }
@@ -196,6 +206,11 @@ HRESULT FaceCredentialProvider::SetUserArray(ICredentialProviderUserArray* users
         m_pCredential = new FaceCredential();
         m_pCredential->Initialize(m_cpus, this, m_pszUserSid);
     }
+    else
+    {
+        LogProvider(L"SetUserArray: re-arming StartVerification on existing credential...");
+        m_pCredential->StartVerification();
+    }
 
     return S_OK;
 }
@@ -255,6 +270,11 @@ HRESULT FaceCredentialProvider::GetCredentialAt(DWORD dwIndex, ICredentialProvid
     {
         m_pCredential = new FaceCredential();
         m_pCredential->Initialize(m_cpus, this, m_pszUserSid);
+    }
+    else
+    {
+        LogProvider(L"GetCredentialAt: re-arming StartVerification on existing credential...");
+        m_pCredential->StartVerification();
     }
 
     *ppcpc = m_pCredential;

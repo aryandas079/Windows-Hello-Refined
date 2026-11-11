@@ -285,7 +285,14 @@ HRESULT FaceCredential::UnAdvise()
     LogMsg(L"FaceCredential::UnAdvise called");
     EnterCriticalSection(&m_cs);
     m_bStopThread = TRUE;
+    m_bVerified = FALSE;
     m_overlay.Hide();
+    if (m_hThread)
+    {
+        WaitForSingleObject(m_hThread, 300);
+        CloseHandle(m_hThread);
+        m_hThread = nullptr;
+    }
     if (m_pEvents)
     {
         m_pEvents->Release();
@@ -298,6 +305,9 @@ HRESULT FaceCredential::UnAdvise()
 void FaceCredential::StartVerification()
 {
     EnterCriticalSection(&m_cs);
+    m_bVerified = FALSE;
+    m_bStopThread = FALSE;
+
     if (m_hThread)
     {
         DWORD exitCode = 0;
@@ -308,12 +318,16 @@ void FaceCredential::StartVerification()
         }
     }
 
-    if (!m_hThread && !m_bVerified)
+    if (!m_hThread)
     {
-        m_bStopThread = FALSE;
-        LogMsg(L"Starting verification thread...");
+        LogMsg(L"Starting verification thread (scenario=%d)...", m_cpus);
         m_overlay.Show(m_username, (int)m_cpus);
         m_hThread = CreateThread(NULL, 0, VerificationThread, this, 0, NULL);
+    }
+    else
+    {
+        LogMsg(L"StartVerification: thread already active, re-arming overlay...");
+        m_overlay.Show(m_username, (int)m_cpus);
     }
     LeaveCriticalSection(&m_cs);
 }
@@ -865,203 +879,230 @@ static void EnsureDaemonRunning()
 void FaceCredential::DoVerification()
 {
     EnsureDaemonRunning();
+    LogMsg(L"DoVerification: entering continuous wake/presence verification loop (scenario=%d)...", m_cpus);
+
+    POINT lastCursor = {0, 0};
+    GetCursorPos(&lastCursor);
 
     const WCHAR* pipeName = L"\\\\.\\pipe\\WindowsHelloRefinedPipe";
-    LogMsg(L"DoVerification connecting to pipe: %s", pipeName);
 
-    HANDLE hPipe = INVALID_HANDLE_VALUE;
-    int retry = 0;
-    while (!m_bStopThread && retry < 25)
+    while (!m_bStopThread && !m_bVerified)
     {
-        hPipe = CreateFileW(
-            pipeName,
-            GENERIC_READ | GENERIC_WRITE,
-            0,
-            NULL,
-            OPEN_EXISTING,
-            0,
-            NULL
-        );
-        if (hPipe != INVALID_HANDLE_VALUE)
-            break;
+        bool bIsCredUI = (m_cpus == CPUS_CREDUI || (int)m_cpus == 3 || (int)m_cpus == 4 || IsCredUIDialogOpen());
 
-        DWORD err = GetLastError();
-        if (err == ERROR_PIPE_BUSY)
+        if (bIsCredUI && !IsCredUIDialogOpen())
         {
-            WaitNamedPipeW(pipeName, 1000);
+            // CredUI dialog closed
+            Sleep(80);
+            continue;
         }
-        else
-        {
-            Sleep(150);
-        }
-        retry++;
-    }
 
-    if (hPipe == INVALID_HANDLE_VALUE)
-    {
-        DWORD err = GetLastError();
-        LogMsg(L"Pipe connection failed after retries. Error: %d", err);
+        // Show scanning animation
         EnterCriticalSection(&m_cs);
-        StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Windows Hello service unreachable. Enter your PIN.");
-        m_overlay.SetState(OVERLAY_FAILED, L"Service unreachable. Enter your PIN.");
+        StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Looking for you...");
+        m_overlay.SetState(OVERLAY_SCANNING, L"Looking for you...");
         LeaveCriticalSection(&m_cs);
-        if (m_pEvents)
+
+        HANDLE hPipe = INVALID_HANDLE_VALUE;
+        int retry = 0;
+        while (!m_bStopThread && retry < 20)
         {
-            m_pEvents->SetFieldString(this, FPF_STATUS_TEXT, m_statusText);
-        }
-        return;
-    }
+            hPipe = CreateFileW(
+                pipeName,
+                GENERIC_READ | GENERIC_WRITE,
+                0,
+                NULL,
+                OPEN_EXISTING,
+                0,
+                NULL
+            );
+            if (hPipe != INVALID_HANDLE_VALUE)
+                break;
 
-    LogMsg(L"Pipe connected. Sending VERIFY command...");
-    const char cmd[] = "VERIFY\n";
-    DWORD bytesWritten = 0;
-    WriteFile(hPipe, cmd, (DWORD)strlen(cmd), &bytesWritten, NULL);
-
-    char buffer[2048] = {0};
-    DWORD bytesRead = 0;
-    if (ReadFile(hPipe, buffer, sizeof(buffer) - 1, &bytesRead, NULL) && bytesRead > 0)
-    {
-        buffer[bytesRead] = '\0';
-        LogMsg(L"Pipe response received (length %d)", bytesRead);
-
-        if (strstr(buffer, "\"status\": \"verified\""))
-        {
-            LogMsg(L"Face verified by daemon!");
-            ExtractJsonString(buffer, "username", m_username, ARRAYSIZE(m_username));
-            ExtractJsonString(buffer, "domain", m_domain, ARRAYSIZE(m_domain));
-            ExtractJsonString(buffer, "password", m_password, ARRAYSIZE(m_password));
-            ExtractJsonString(buffer, "pin", m_pin, ARRAYSIZE(m_pin));
-
-            EnterCriticalSection(&m_cs);
-            m_bVerified = TRUE;
-            m_hasPassword = (wcslen(m_password) > 0);
-            if (m_hasPassword || wcslen(m_pin) > 0)
+            DWORD err = GetLastError();
+            if (err == ERROR_PIPE_BUSY)
             {
-                StringCchPrintfW(m_statusText, ARRAYSIZE(m_statusText), L"Welcome back, %s!", m_username);
+                WaitNamedPipeW(pipeName, 500);
             }
             else
             {
-                StringCchPrintfW(m_statusText, ARRAYSIZE(m_statusText), L"Face verified! Hello %s", m_username);
+                Sleep(80);
             }
-            m_overlay.SetState(OVERLAY_VERIFIED);
-            LeaveCriticalSection(&m_cs);
-
-            if (m_pEvents)
-            {
-                m_pEvents->SetFieldString(this, FPF_STATUS_TEXT, m_statusText);
-                m_pEvents->SetFieldState(this, FPF_SUBMIT_BUTTON, CPFS_DISPLAY_IN_SELECTED_TILE);
-
-                HBITMAP hbmpWink = LoadAssetBitmap(L"hello_wink.bmp");
-                if (hbmpWink)
-                {
-                    m_pEvents->SetFieldBitmap(this, FPF_LOGO, hbmpWink);
-                }
-            }
-
-            bool bIsCredUI = (m_cpus == CPUS_CREDUI || (int)m_cpus == 3 || (int)m_cpus == 4 || IsCredUIDialogOpen());
-            LPCWSTR secret = (wcslen(m_pin) > 0) ? m_pin : m_password;
-
-            if (m_pProvider && !bIsCredUI)
-            {
-                LogMsg(L"Face verified! Triggering CredentialsChanged for lock screen...");
-                m_pProvider->OnFaceVerified();
-            }
-
-            if (wcslen(secret) > 0)
-            {
-                // Fire PIN auto-fill immediately while wink animation and chime play concurrently
-                LogMsg(L"Face verified! Triggering instant password/PIN auto-fill (%d characters, bIsCredUI=%d)...",
-                       (int)wcslen(secret), bIsCredUI);
-                SimulatePinInput(secret, bIsCredUI);
-
-                // Guardian watcher loop:
-                // If the user clicks the screen or dialog AFTER verification has finished,
-                // we detect the interaction and re-type the credentials so the user is never stuck with an empty box!
-                LogMsg(L"Starting post-verification guardian loop (bIsCredUI=%d)...", bIsCredUI);
-                DWORD startTime = GetTickCount();
-                DWORD lastAutoRetry = startTime;
-
-                while (!m_bStopThread && (GetTickCount() - startTime < 8000))
-                {
-                    Sleep(60);
-                    if (m_bStopThread) break;
-
-                    if (!bIsCredUI && !IsLockScreenDesktop())
-                    {
-                        LogMsg(L"Guardian: Workstation unlocked or desktop switched. Exiting guardian loop.");
-                        break;
-                    }
-
-                    if (bIsCredUI && !IsCredUIDialogOpen())
-                    {
-                        LogMsg(L"Guardian: CredUI dialog closed. Authentication successful.");
-                        break;
-                    }
-
-                    // Detect mouse click (VK_LBUTTON) or wake key (VK_SPACE, VK_RETURN)
-                    bool userClicked = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-                    bool userKey = ((GetAsyncKeyState(VK_SPACE) & 0x8000) != 0) ||
-                                   ((GetAsyncKeyState(VK_RETURN) & 0x8000) != 0);
-
-                    DWORD now = GetTickCount();
-                    bool periodicRetry = !bIsCredUI && (now - lastAutoRetry > 2000);
-
-                    if (userClicked || userKey || periodicRetry)
-                    {
-                        LogMsg(L"Guardian: Interaction detected (click=%d, key=%d, periodic=%d). Auto-filling credentials...",
-                               userClicked, userKey, periodicRetry);
-
-                        if (userClicked || userKey)
-                        {
-                            Sleep(180);
-                        }
-
-                        if (m_bStopThread) break;
-                        if (!bIsCredUI && !IsLockScreenDesktop()) break;
-                        if (bIsCredUI && !IsCredUIDialogOpen()) break;
-
-                        if (bIsCredUI)
-                        {
-                            HWND hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
-                            if (!hwndDlg) hwndDlg = FindWindowW(NULL, L"Windows Security");
-                            if (!hwndDlg) hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", NULL);
-                            if (hwndDlg)
-                            {
-                                SetForegroundWindow(hwndDlg);
-                                BringWindowToTop(hwndDlg);
-                                SetActiveWindow(hwndDlg);
-                                Sleep(60);
-                            }
-                        }
-
-                        // Trigger auto-fill via dedicated input thread
-                        SimulatePinInput(secret, bIsCredUI);
-
-                        lastAutoRetry = GetTickCount();
-                        Sleep(400); // Debounce
-                    }
-                }
-            }
+            retry++;
         }
-        else
+
+        if (hPipe == INVALID_HANDLE_VALUE)
         {
-            LogMsg(L"Face verification failed or timed out. Waiting for user interaction on lock screen...");
-            EnterCriticalSection(&m_cs);
-            StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Couldn't recognize face. Enter your PIN.");
-            m_overlay.SetState(OVERLAY_FAILED, L"Couldn't recognize face. Enter your PIN.");
-            LeaveCriticalSection(&m_cs);
-            if (m_pEvents)
+            LogMsg(L"DoVerification: could not connect to pipe (err=%lu). Retrying...", GetLastError());
+            Sleep(500);
+            continue;
+        }
+
+        LogMsg(L"DoVerification: pipe connected. Sending VERIFY command...");
+        const char cmd[] = "VERIFY\n";
+        DWORD bytesWritten = 0;
+        WriteFile(hPipe, cmd, (DWORD)strlen(cmd), &bytesWritten, NULL);
+
+        char buffer[2048] = {0};
+        DWORD bytesRead = 0;
+        BOOL bRead = ReadFile(hPipe, buffer, sizeof(buffer) - 1, &bytesRead, NULL);
+        CloseHandle(hPipe);
+
+        if (bRead && bytesRead > 0)
+        {
+            buffer[bytesRead] = '\0';
+            LogMsg(L"DoVerification: pipe response received (%d bytes)", bytesRead);
+
+            if (strstr(buffer, "\"status\": \"verified\""))
             {
-                m_pEvents->SetFieldString(this, FPF_STATUS_TEXT, m_statusText);
+                LogMsg(L"Face verified by daemon!");
+                ExtractJsonString(buffer, "username", m_username, ARRAYSIZE(m_username));
+                ExtractJsonString(buffer, "domain", m_domain, ARRAYSIZE(m_domain));
+                ExtractJsonString(buffer, "password", m_password, ARRAYSIZE(m_password));
+                ExtractJsonString(buffer, "pin", m_pin, ARRAYSIZE(m_pin));
+
+                EnterCriticalSection(&m_cs);
+                m_bVerified = TRUE;
+                m_hasPassword = (wcslen(m_password) > 0);
+                if (m_hasPassword || wcslen(m_pin) > 0)
+                {
+                    StringCchPrintfW(m_statusText, ARRAYSIZE(m_statusText), L"Welcome back, %s!", m_username);
+                }
+                else
+                {
+                    StringCchPrintfW(m_statusText, ARRAYSIZE(m_statusText), L"Face verified! Hello %s", m_username);
+                }
+                m_overlay.SetState(OVERLAY_VERIFIED);
+                LeaveCriticalSection(&m_cs);
+
+                if (m_pEvents)
+                {
+                    m_pEvents->SetFieldString(this, FPF_STATUS_TEXT, m_statusText);
+                    m_pEvents->SetFieldState(this, FPF_SUBMIT_BUTTON, CPFS_DISPLAY_IN_SELECTED_TILE);
+
+                    HBITMAP hbmpWink = LoadAssetBitmap(L"hello_wink.bmp");
+                    if (hbmpWink)
+                    {
+                        m_pEvents->SetFieldBitmap(this, FPF_LOGO, hbmpWink);
+                    }
+                }
+
+                if (m_pProvider && !bIsCredUI)
+                {
+                    LogMsg(L"Face verified! Triggering CredentialsChanged for lock screen...");
+                    m_pProvider->OnFaceVerified();
+                }
+
+                LPCWSTR secret = (wcslen(m_pin) > 0) ? m_pin : m_password;
+                if (wcslen(secret) > 0)
+                {
+                    LogMsg(L"Face verified! Triggering instant password/PIN auto-fill (%d characters, bIsCredUI=%d)...",
+                           (int)wcslen(secret), bIsCredUI);
+                    SimulatePinInput(secret, bIsCredUI);
+
+                    // Post-verification guardian loop
+                    LogMsg(L"Starting post-verification guardian loop (bIsCredUI=%d)...", bIsCredUI);
+                    DWORD startTime = GetTickCount();
+                    DWORD lastAutoRetry = startTime;
+
+                    while (!m_bStopThread && (GetTickCount() - startTime < 8000))
+                    {
+                        Sleep(60);
+                        if (m_bStopThread) break;
+
+                        if (!bIsCredUI && !IsLockScreenDesktop())
+                        {
+                            LogMsg(L"Guardian: Workstation unlocked or desktop switched. Exiting guardian loop.");
+                            break;
+                        }
+
+                        if (bIsCredUI && !IsCredUIDialogOpen())
+                        {
+                            LogMsg(L"Guardian: CredUI dialog closed. Authentication successful.");
+                            break;
+                        }
+
+                        bool userClicked = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+                        bool userKey = ((GetAsyncKeyState(VK_SPACE) & 0x8000) != 0) ||
+                                       ((GetAsyncKeyState(VK_RETURN) & 0x8000) != 0);
+
+                        DWORD now = GetTickCount();
+                        bool periodicRetry = !bIsCredUI && (now - lastAutoRetry > 2000);
+
+                        if (userClicked || userKey || periodicRetry)
+                        {
+                            LogMsg(L"Guardian: Interaction detected (click=%d, key=%d, periodic=%d). Auto-filling...",
+                                   userClicked, userKey, periodicRetry);
+
+                            if (userClicked || userKey)
+                            {
+                                Sleep(180);
+                            }
+
+                            if (m_bStopThread) break;
+                            if (!bIsCredUI && !IsLockScreenDesktop()) break;
+                            if (bIsCredUI && !IsCredUIDialogOpen()) break;
+
+                            SimulatePinInput(secret, bIsCredUI);
+                            lastAutoRetry = GetTickCount();
+                            Sleep(400);
+                        }
+                    }
+                }
+                break; // Verification complete and unlocked!
+            }
+            else
+            {
+                LogMsg(L"Face verification round completed: no face or match. Camera is idle. Entering wake standby...");
+            }
+        }
+
+        if (m_bStopThread || m_bVerified) break;
+
+        // ── LOW-POWER STANDBY MONITOR ──
+        // The camera is completely OFF (LED is off).
+        // Monitors user activity (mouse move, mouse click, keyboard key, spacebar) or periodic 3.0s re-scan.
+        GetCursorPos(&lastCursor);
+        DWORD standbyStart = GetTickCount();
+
+        while (!m_bStopThread && !m_bVerified)
+        {
+            Sleep(80);
+            if (m_bStopThread) break;
+
+            if (bIsCredUI && !IsCredUIDialogOpen())
+            {
+                break;
+            }
+
+            POINT ptNow = {0, 0};
+            GetCursorPos(&ptNow);
+            bool mouseMoved = (abs(ptNow.x - lastCursor.x) > 3 || abs(ptNow.y - lastCursor.y) > 3);
+            if (mouseMoved) lastCursor = ptNow;
+
+            bool mouseClicked = ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0) ||
+                                ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0);
+
+            bool keyPressed = ((GetAsyncKeyState(VK_SPACE) & 0x8000) != 0) ||
+                              ((GetAsyncKeyState(VK_RETURN) & 0x8000) != 0) ||
+                              ((GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0) ||
+                              ((GetAsyncKeyState(VK_BACK) & 0x8000) != 0) ||
+                              ((GetAsyncKeyState(VK_UP) & 0x8000) != 0) ||
+                              ((GetAsyncKeyState(VK_DOWN) & 0x8000) != 0);
+
+            DWORD elapsedStandby = GetTickCount() - standbyStart;
+            bool periodicWake = (elapsedStandby >= 3000);
+
+            if (mouseMoved || mouseClicked || keyPressed || periodicWake)
+            {
+                LogMsg(L"Wake trigger (mouseMove=%d, click=%d, key=%d, periodic=%d). Resuming face verification immediately!",
+                       mouseMoved, mouseClicked, keyPressed, periodicWake);
+                break; // Break standby loop to start next verification attempt immediately!
             }
         }
     }
-    else
-    {
-        LogMsg(L"ReadFile from pipe failed: %d", GetLastError());
-    }
 
-    CloseHandle(hPipe);
+    LogMsg(L"DoVerification exited (m_bVerified=%d, m_bStopThread=%d)", m_bVerified, m_bStopThread);
 }
 
 HRESULT FaceCredential::SetSelected(BOOL* pbAutoLogon)
