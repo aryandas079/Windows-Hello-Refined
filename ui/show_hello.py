@@ -21,7 +21,7 @@ def show_transparent_hello(username="Aryan"):
     Uses file:// URL so relative assets (gsap.min.js) load correctly.
     """
     screen_width = get_screen_center()
-    win_w, win_h = 380, 300
+    win_w, win_h = 230, 180
     win_x = (screen_width - win_w) // 2
     win_y = 40  # near top of screen, like real Windows Hello
 
