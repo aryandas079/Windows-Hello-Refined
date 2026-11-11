@@ -602,26 +602,64 @@ static void SendKey(WORD vk, bool bExtended = false)
     }
 }
 
-static void SendUnicodeChar(WCHAR ch)
+static void SendCharKey(WCHAR ch)
 {
-    INPUT inputs[2] = {0};
-    inputs[0].type = INPUT_KEYBOARD;
-    inputs[0].ki.wVk = 0;
-    inputs[0].ki.wScan = ch;
-    inputs[0].ki.dwFlags = KEYEVENTF_UNICODE;
-
-    inputs[1].type = INPUT_KEYBOARD;
-    inputs[1].ki.wVk = 0;
-    inputs[1].ki.wScan = ch;
-    inputs[1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
-
-    UINT r1 = SendInput(1, &inputs[0], sizeof(INPUT));
-    Sleep(18);
-    UINT r2 = SendInput(1, &inputs[1], sizeof(INPUT));
-    Sleep(18);
-    if (r1 == 0 || r2 == 0)
+    SHORT vkState = VkKeyScanW(ch);
+    if (vkState == -1)
     {
-        LogMsg(L"SendUnicodeChar('%c') SendInput failed! r1=%u, r2=%u, err=%lu", ch, r1, r2, GetLastError());
+        // Fallback for special Unicode symbols
+        INPUT charInput[2] = {0};
+        charInput[0].type = INPUT_KEYBOARD;
+        charInput[0].ki.wScan = ch;
+        charInput[0].ki.dwFlags = KEYEVENTF_UNICODE;
+
+        charInput[1].type = INPUT_KEYBOARD;
+        charInput[1].ki.wScan = ch;
+        charInput[1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+
+        SendInput(2, charInput, sizeof(INPUT));
+        Sleep(16);
+        return;
+    }
+
+    BYTE vk = LOBYTE(vkState);
+    BYTE shiftState = HIBYTE(vkState);
+    bool bShift = (shiftState & 1) != 0;
+
+    if (bShift)
+    {
+        INPUT shiftDown = {0};
+        shiftDown.type = INPUT_KEYBOARD;
+        shiftDown.ki.wVk = VK_SHIFT;
+        shiftDown.ki.wScan = (WORD)MapVirtualKeyW(VK_SHIFT, MAPVK_VK_TO_VSC);
+        SendInput(1, &shiftDown, sizeof(INPUT));
+        Sleep(8);
+    }
+
+    INPUT keyInp[2] = {0};
+    keyInp[0].type = INPUT_KEYBOARD;
+    keyInp[0].ki.wVk = vk;
+    keyInp[0].ki.wScan = (WORD)MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
+
+    keyInp[1].type = INPUT_KEYBOARD;
+    keyInp[1].ki.wVk = vk;
+    keyInp[1].ki.wScan = keyInp[0].ki.wScan;
+    keyInp[1].ki.dwFlags = KEYEVENTF_KEYUP;
+
+    SendInput(1, &keyInp[0], sizeof(INPUT));
+    Sleep(16);
+    SendInput(1, &keyInp[1], sizeof(INPUT));
+    Sleep(16);
+
+    if (bShift)
+    {
+        INPUT shiftUp = {0};
+        shiftUp.type = INPUT_KEYBOARD;
+        shiftUp.ki.wVk = VK_SHIFT;
+        shiftUp.ki.wScan = (WORD)MapVirtualKeyW(VK_SHIFT, MAPVK_VK_TO_VSC);
+        shiftUp.ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput(1, &shiftUp, sizeof(INPUT));
+        Sleep(8);
     }
 }
 
@@ -674,7 +712,7 @@ static void SimulatePinInput(LPCWSTR pszPin, bool bIsCredUI = false)
     }
     else
     {
-        // In CredUI dialog box: ensure the dialog window has focus
+        // In CredUI dialog box: ensure the dialog window has focus and focus the PIN box via click
         HWND hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
         if (!hwndDlg) hwndDlg = FindWindowW(NULL, L"Windows Security");
         if (!hwndDlg) hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", NULL);
@@ -682,7 +720,20 @@ static void SimulatePinInput(LPCWSTR pszPin, bool bIsCredUI = false)
         {
             SetForegroundWindow(hwndDlg);
             BringWindowToTop(hwndDlg);
-            Sleep(100);
+            Sleep(80);
+
+            RECT rc;
+            if (GetWindowRect(hwndDlg, &rc))
+            {
+                int pinX = rc.left + (rc.right - rc.left) / 2;
+                int pinY = rc.top + (int)((rc.bottom - rc.top) * 0.635f);
+                LogMsg(L"SimulatePinInput: focusing PIN box via click at (%d,%d)...", pinX, pinY);
+                SetCursorPos(pinX, pinY);
+                mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+                Sleep(30);
+                mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+                Sleep(100);
+            }
         }
     }
 
@@ -693,11 +744,11 @@ static void SimulatePinInput(LPCWSTR pszPin, bool bIsCredUI = false)
     }
     Sleep(30);
 
-    // Step 3: Type each character with genuine hardware Unicode packets (KEYEVENTF_UNICODE)
-    LogMsg(L"SimulatePinInput: typing password/PIN characters with KEYEVENTF_UNICODE...");
+    // Step 3: Type each character with hardware virtual keys, scan codes, and shift modifiers
+    LogMsg(L"SimulatePinInput: typing password/PIN characters with hardware virtual keys...");
     for (size_t i = 0; i < wcslen(pszPin); i++)
     {
-        SendUnicodeChar(pszPin[i]);
+        SendCharKey(pszPin[i]);
     }
 
     // Step 4: Submit password/PIN with Enter
@@ -948,7 +999,7 @@ void FaceCredential::DoVerification()
                         // Clear and re-type
                         for (int b = 0; b < 16; b++) SendKey(VK_BACK);
                         Sleep(25);
-                        for (size_t i = 0; i < wcslen(secret); i++) SendUnicodeChar(secret[i]);
+                        for (size_t i = 0; i < wcslen(secret); i++) SendCharKey(secret[i]);
                         Sleep(50);
                         SendKey(VK_RETURN);
 
