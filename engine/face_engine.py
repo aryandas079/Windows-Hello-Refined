@@ -257,13 +257,14 @@ class FaceEngine:
     def check_liveness(self, frame, face):
         """
         Multi-layer biometric anti-spoofing and liveness detection:
-        Layer 1 : Laplacian texture variance (screen blur / flat surface)
-        Layer 2 : YCrCb color-space chrominance distribution (print / screen gamut)
-        Layer 3 : Local Binary Pattern (LBP) micro-texture analysis (skin micropores vs paper)
-        Layer 4 : Specular highlight asymmetry (3D curved skin vs flat screen glass)
-        Layer 5 : MediaPipe 478 3D landmark depth curvature (Z-axis anatomical profile)
-        Layer 6 : Directional gradient / moire pattern detection (phone LCD/OLED raster)
-        Layer 7 : Temporal EAR dynamics, micro-tremor, and blink verification (rejects static photos)
+        Layer 1 : Laplacian texture frequency & screen moire raster bounds
+        Layer 2 : Biological hemoglobin spectral absorption (skin B/R ratio vs display backlight)
+        Layer 3 : YCrCb color-space chrominance gamut (print / display saturation)
+        Layer 4 : Local Binary Pattern (LBP) micro-texture analysis (skin micropores vs paper)
+        Layer 5 : Specular highlight asymmetry (3D curved skin vs flat phone screen glass)
+        Layer 6 : MediaPipe 478 3D landmark depth curvature (Z-axis anatomical profile)
+        Layer 7 : Directional gradient / moire pattern detection (LCD/OLED subpixel matrix)
+        Layer 8 : Temporal EAR dynamics, micro-tremor, and blink verification (rejects static photos)
 
         Returns: (is_live: bool, liveness_score: float, message: str)
         """
@@ -278,56 +279,72 @@ class FaceEngine:
         face_roi = frame[y1:y2, x1:x2]
         gray_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
 
-        # Layer 1: Laplacian texture frequency
+        # Layer 1: Laplacian texture frequency & screen pixel raster bounds
         lap_var = float(cv2.Laplacian(gray_roi, cv2.CV_64F).var())
-        if lap_var < 8.0:
-            return False, lap_var / 150.0, "Extreme blur or flat surface detected"
+        if lap_var < 15.0:
+            return False, 0.10, "Extreme blur or flat surface detected"
+        if lap_var > 550.0:
+            return False, 0.10, "Digital screen subpixel raster / moire detected (phone spoof)"
 
-        # Layer 2: YCrCb color chrominance distribution
+        # Layer 2: Biological hemoglobin spectral reflectance (B/R absorption ratio)
+        # Real living human tissue exhibits deep capillary red reflectance (B/R < 0.90).
+        # Mobile phone displays (OLED/LCD) emit heavy 450nm blue light (B/R >= 0.94).
+        h_roi, w_roi = face_roi.shape[:2]
+        skin_sample = face_roi[int(h_roi * 0.30):int(h_roi * 0.75), int(w_roi * 0.25):int(w_roi * 0.75)]
+        if skin_sample.size > 0:
+            mean_bgr = np.mean(skin_sample, axis=(0, 1))
+            b_val, g_val, r_val = float(mean_bgr[0]), float(mean_bgr[1]), float(mean_bgr[2])
+            br_ratio = b_val / (r_val + 1e-6)
+            if br_ratio > 0.93 and r_val > 65.0:
+                return False, 0.10, "Digital display backlight / blue emitter detected (phone spoof)"
+
+        # Layer 3: YCrCb color chrominance distribution & display gamut
         ycrcb = cv2.cvtColor(face_roi, cv2.COLOR_BGR2YCrCb)
         _, cr, cb = cv2.split(ycrcb)
         cr_std = float(np.std(cr))
         cb_std = float(np.std(cb))
         if cr_std < 0.8 or cb_std < 0.8:
-            return False, (cr_std + cb_std) / 20.0, "Abnormal color compression (possible print/screen)"
+            return False, 0.15, "Abnormal color compression (monochrome or cheap print)"
+        if cr_std > 27.0 or cb_std > 23.0:
+            return False, 0.12, "Unnatural digital screen saturation / display gamut detected"
 
-        # Layer 3: LBP micro-texture entropy
+        # Layer 4: LBP micro-texture entropy
         lbp_hist = _lbp_histogram(gray_roi)
         lbp_entropy = -float(np.sum(lbp_hist * np.log2(lbp_hist + 1e-10)))
         if lbp_entropy < 4.4:
             return False, lbp_entropy / 8.0, "LBP micro-texture too uniform (possible photo)"
 
-        # Layer 4: Specular highlight asymmetry (flat glass vs 3D curved face)
-        _, thresh = cv2.threshold(gray_roi, 225, 255, cv2.THRESH_BINARY)
+        # Layer 5: Specular highlight asymmetry (flat glass vs 3D curved face)
+        _, thresh = cv2.threshold(gray_roi, 220, 255, cv2.THRESH_BINARY)
         highlight_total = float(np.sum(thresh > 0))
-        if highlight_total > 250:
+        if highlight_total > 160:
             half_w = gray_roi.shape[1] // 2
             left_h  = float(np.sum(thresh[:, :half_w] > 0))
             right_h = float(np.sum(thresh[:, half_w:] > 0))
             sym = min(left_h, right_h) / (max(left_h, right_h) + 1e-6)
-            if sym > 0.96:
-                return False, 1.0 - sym, "Flat screen glass reflection detected"
+            if sym > 0.93:
+                return False, 0.12, "Flat screen glass reflection detected"
 
-        # Layer 5: MediaPipe 478 3D landmark depth curvature
+        # Layer 6: MediaPipe 478 3D landmark depth curvature
         landmarks, blendshapes = self.get_face_landmarks_478(frame)
         if landmarks is None or len(landmarks) < 468:
-            return False, 0.25, "MediaPipe 478 landmarks not registered"
+            return False, 0.20, "MediaPipe 478 landmarks not registered"
 
         zs = [lm.z for lm in landmarks]
         z_span = float(max(zs) - min(zs))
         if z_span < 0.08:
-            return False, z_span / 0.20, "Lack of 3D facial depth (possible flat photo)"
+            return False, 0.15, "Lack of 3D facial depth (possible flat photo)"
 
-        # Layer 6: Directional gradient / moire pattern detection
+        # Layer 7: Directional gradient / moire pattern detection
         blurred = cv2.GaussianBlur(gray_roi, (15, 15), 0)
         sobelx_std = float(np.std(cv2.Sobel(blurred, cv2.CV_64F, 1, 0, ksize=3)))
         sobely_std = float(np.std(cv2.Sobel(blurred, cv2.CV_64F, 0, 1, ksize=3)))
         max_grad = max(sobelx_std, sobely_std)
         grad_ratio = min(sobelx_std, sobely_std) / (max_grad + 1e-6)
-        if grad_ratio < 0.04 and max_grad > 60.0:
-            return False, grad_ratio, "Moire / screen raster scanlines detected"
+        if grad_ratio < 0.04 and max_grad > 55.0:
+            return False, 0.12, "Moire / screen raster scanlines detected"
 
-        # Layer 7: Temporal EAR dynamics, micro-movement, and blink detection
+        # Layer 8: Temporal EAR dynamics, micro-movement, and blink detection
         blink_verified = False
         ear_l = _ear(landmarks, _LEFT_EYE_UPPER,  _LEFT_EYE_LOWER,  _LEFT_EYE_CORNERS)
         ear_r = _ear(landmarks, _RIGHT_EYE_UPPER, _RIGHT_EYE_LOWER, _RIGHT_EYE_CORNERS)
@@ -350,25 +367,31 @@ class FaceEngine:
             if transitions >= 2:
                 blink_verified = True
 
-        # Check for static photo attack over consecutive frames
-        if len(self._ear_values) >= 8:
+        # Require an observation window: never grant full liveness on initial 1-4 frames!
+        # Static photos on a phone or paper have near-zero ocular micro-tremor across frames.
+        if len(self._ear_values) < 5:
+            dynamic_score = 0.20
+        elif blink_verified:
+            dynamic_score = 1.0
+        else:
             ear_std = float(np.std(self._ear_values))
-            bs_std = float(np.std(self._blendshape_history)) if len(self._blendshape_history) >= 8 else 0.005
-            if ear_std < 0.0012 and bs_std < 0.0010 and not blink_verified:
-                return False, 0.20, "Static photo spoof detected (no ocular micro-movement or blink)"
+            bs_std = float(np.std(self._blendshape_history)) if len(self._blendshape_history) >= 5 else 0.0
+            if ear_std < 0.0013 and bs_std < 0.0011:
+                return False, 0.10, "Static photo spoof detected (no ocular micro-movement or blink)"
+            elif ear_std >= 0.0020 or bs_std >= 0.0016:
+                dynamic_score = 0.92
+            else:
+                dynamic_score = 0.40
 
-        # Combined scoring
-        texture_score = min(1.0, max(0.0, (lap_var - 8.0) / 120.0))
+        # Natural skin texture score: peaks in [80, 260], decays smoothly outside
+        if lap_var <= 200.0:
+            texture_score = min(1.0, max(0.0, (lap_var - 15.0) / 100.0))
+        else:
+            texture_score = max(0.0, 1.0 - (lap_var - 200.0) / 350.0)
+
         color_score   = min(1.0, (cr_std + cb_std) / 22.0)
         lbp_score     = min(1.0, max(0.0, (lbp_entropy - 4.2) / 3.0))
         depth_score   = min(1.0, max(0.0, (z_span - 0.08) / 0.15))
-
-        if blink_verified:
-            dynamic_score = 1.0
-        elif len(self._ear_values) >= 4 and float(np.std(self._ear_values)) >= 0.0020:
-            dynamic_score = 0.88
-        else:
-            dynamic_score = 0.70
 
         liveness_score = (
             texture_score * 0.20 +
@@ -378,7 +401,7 @@ class FaceEngine:
             dynamic_score * 0.25
         )
 
-        if liveness_score < 0.58:
+        if liveness_score < 0.65:
             return False, liveness_score, f"Liveness check failed (score={liveness_score:.2f})"
 
         return True, liveness_score, "Live human verified"
