@@ -165,9 +165,16 @@ class FaceDaemon:
             )
 
             try:
-                win32pipe.ConnectNamedPipe(h_pipe, None)
+                try:
+                    win32pipe.ConnectNamedPipe(h_pipe, None)
+                except pywintypes.error as e:
+                    if e.winerror == 535:  # ERROR_PIPE_CONNECTED (client already connected)
+                        pass
+                    else:
+                        raise
                 self.handle_client(h_pipe)
-            except Exception:
+            except Exception as e:
+                print(f"[!] Server exception: {e}")
                 time.sleep(0.05)
             finally:
                 try:
