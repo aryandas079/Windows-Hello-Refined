@@ -48,14 +48,18 @@ class FaceDaemon:
             self.camera = None
 
     def start_hud_async(self, username):
-        """Spawns the transparent top-center vector HUD in a separate process."""
+        """Spawns the transparent Windows Hello animation overlay (show_hello.py)."""
         import subprocess
         python_exe = sys.executable
-        hud_script = os.path.join(BASE_DIR, "ui", "hello_hud.py")
+        hud_script = os.path.join(BASE_DIR, "ui", "show_hello.py")
         try:
-            return subprocess.Popen([python_exe, hud_script, username])
+            proc = subprocess.Popen(
+                [python_exe, hud_script, username],
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            return proc
         except Exception as e:
-            print(f"[!] Could not spawn HUD: {e}")
+            print(f"[!] Could not spawn animation: {e}")
             return None
 
     def verify_current_face(self, timeout_sec=4.0):

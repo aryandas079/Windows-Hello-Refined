@@ -1,8 +1,10 @@
 #include "FaceCredential.h"
 #include "FaceCredentialProvider.h"
 #include <shlwapi.h>
+#include <shellapi.h>
 
 #pragma comment(lib, "shlwapi.lib")
+#pragma comment(lib, "shell32.lib")
 
 extern HINSTANCE g_hInst;
 
@@ -126,6 +128,34 @@ void FaceCredential::StartVerification()
     if (!m_hThread && !m_bVerified)
     {
         m_bStopThread = FALSE;
+
+        // ── Launch the Windows Hello animation overlay ──
+        // Resolve path: <DLL folder>\..\ui\show_hello.py
+        WCHAR dllDir[MAX_PATH] = {0};
+        GetModuleFileNameW(g_hInst, dllDir, ARRAYSIZE(dllDir));
+        PathRemoveFileSpecW(dllDir);   // now = credential_provider\
+
+        WCHAR pythonExe[MAX_PATH] = {0};
+        PathCombineW(pythonExe, dllDir, L"..\\.venv\\Scripts\\pythonw.exe");
+
+        WCHAR scriptPath[MAX_PATH] = {0};
+        PathCombineW(scriptPath, dllDir, L"..\\ui\\show_hello.py");
+
+        // Build quoted argument string: "ui\show_hello.py" "Username"
+        WCHAR args[MAX_PATH * 2] = {0};
+        StringCchPrintfW(args, ARRAYSIZE(args), L"\"%s\" \"%s\"", scriptPath, L"Aryan");
+
+        // ShellExecute launches in the user's desktop session (session 1)
+        // even when called from the credential provider (session 0 / Winlogon)
+        ShellExecuteW(
+            NULL,           // hwnd
+            L"open",        // verb
+            pythonExe,      // pythonw.exe (no console window)
+            args,           // arguments
+            NULL,           // working dir
+            SW_HIDE         // hidden – the pywebview window IS the UI
+        );
+
         m_hThread = CreateThread(NULL, 0, VerificationThread, this, 0, NULL);
     }
 }
