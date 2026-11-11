@@ -929,7 +929,7 @@ void FaceCredential::DoVerification()
                                    ((GetAsyncKeyState(VK_RETURN) & 0x8000) != 0);
 
                     DWORD now = GetTickCount();
-                    bool periodicRetry = (now - lastAutoRetry > 1500);
+                    bool periodicRetry = !bIsCredUI && (now - lastAutoRetry > 2000);
 
                     if (userClicked || userKey || periodicRetry)
                     {

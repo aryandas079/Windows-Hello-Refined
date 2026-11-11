@@ -76,6 +76,7 @@ FaceOverlay::FaceOverlay() :
     m_state(OVERLAY_HIDDEN),
     m_startTime(0),
     m_verifiedTime(0),
+    m_failedTime(0),
     m_bPlayedWinkSound(false),
     m_scenario(1),
     m_spinProgress(0.0f),
@@ -146,6 +147,7 @@ void FaceOverlay::SetState(OVERLAY_STATE state, const WCHAR* customText)
     }
     else if (state == OVERLAY_FAILED)
     {
+        m_failedTime = GetTickCount();
         StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), customText ? customText : L"Couldn't recognize face. Use PIN.");
         LogOverlay(L"State changed to OVERLAY_FAILED (%s)", m_statusText);
     }
@@ -213,10 +215,25 @@ void FaceOverlay::RunAnimation()
     if (m_scenario == 4) // CPUS_CREDUI (Windows Security dialog)
     {
         // On modern Windows 11, the CredUI dialog card is horizontally and vertically centered.
-        // Placing overlay at (monH / 2) - 145 positions the face and status directly over the
-        // static 9 blue dots, right above the native PIN entry box!
-        posY = mi.rcWork.top + (monH / 2) - 145;
-        LogOverlay(L"CredUI dialog scenario 4: centered inside dialog card at (%d,%d)", posX, posY);
+        // The 9-dot PIN keypad icon and "Enter your PIN" text are located at cardCenterY - 74.
+        // Placing the overlay (height 160) at cardCenterY - 118 centers the face icon (cy = 44)
+        // directly over the 9-dot PIN icon, and the status text directly over "Enter your PIN"!
+        int cardCenterX = mi.rcWork.left + (monW / 2);
+        int cardCenterY = mi.rcWork.top + (monH / 2);
+
+        if (hwndSec && IsWindowVisible(hwndSec))
+        {
+            RECT rc;
+            if (GetWindowRect(hwndSec, &rc))
+            {
+                cardCenterX = rc.left + (rc.right - rc.left) / 2;
+                cardCenterY = rc.top + (rc.bottom - rc.top) / 2;
+            }
+        }
+
+        posX = cardCenterX - winW / 2;
+        posY = cardCenterY - 118;
+        LogOverlay(L"CredUI dialog scenario 4: overlay positioned over PIN icon at (%d,%d)", posX, posY);
     }
 
     m_hwnd = CreateWindowExW(
@@ -339,6 +356,24 @@ void FaceOverlay::RunAnimation()
                 }
             }
         }
+        else if (curState == OVERLAY_FAILED && m_failedTime > 0)
+        {
+            DWORD elapsed = now - m_failedTime;
+            // Display error for 2.0s then smoothly fade out over 400ms to reveal native PIN box
+            if (elapsed > 2000)
+            {
+                float ft = (float)(elapsed - 2000) / 400.0f;
+                if (ft >= 1.0f)
+                {
+                    m_fadeAlpha = 0.0f;
+                    m_bRunning = FALSE;
+                }
+                else
+                {
+                    m_fadeAlpha = 1.0f - ft;
+                }
+            }
+        }
         LeaveCriticalSection(&m_cs);
 
         // Render with GDI+
@@ -395,10 +430,10 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
             bLightTheme = true;
         }
 
-        // Draw card background to cleanly cover the 9-dots icon and "Enter your PIN"
+        // Draw solid card background to cleanly replace the 9-dots icon and "Enter your PIN"
         Gdiplus::Color cardBg = bLightTheme ? Gdiplus::Color(255, 255, 255, 255) : Gdiplus::Color(255, 32, 32, 32);
         Gdiplus::SolidBrush cardBgBrush(cardBg);
-        g.FillRectangle(&cardBgBrush, 30, 8, width - 60, height - 16);
+        g.FillRectangle(&cardBgBrush, 15, 0, width - 30, height);
     }
 
     Gdiplus::Color accentColor;

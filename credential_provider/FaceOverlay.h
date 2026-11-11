@@ -39,6 +39,7 @@ private:
 
     DWORD m_startTime;
     DWORD m_verifiedTime;
+    DWORD m_failedTime;
     bool m_bPlayedWinkSound;
     float m_spinProgress;   // 0.0 to 1.0 during spin
     float m_winkProgress;   // 0.0 to 1.0 during wink
