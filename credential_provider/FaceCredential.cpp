@@ -282,81 +282,118 @@ DWORD WINAPI FaceCredential::VerificationThread(LPVOID lpParam)
     return 0;
 }
 
-static HBITMAP LoadAssetBitmap(LPCWSTR filename)
+static HBITMAP CreatePARGBDIB(int width, int height, void** ppvBits)
 {
-    // First attempt to load with GDI+ for full 32-bit alpha support
-    WCHAR assetPath[MAX_PATH] = {0};
-    GetModuleFileNameW(g_hInst, assetPath, ARRAYSIZE(assetPath));
-    PathRemoveFileSpecW(assetPath);
-    PathAppendW(assetPath, L"..\\assets");
-    PathAppendW(assetPath, filename);
-
-    Gdiplus::Bitmap* pBmp = Gdiplus::Bitmap::FromFile(assetPath);
-    if (pBmp && pBmp->GetLastStatus() == Gdiplus::Ok)
-    {
-        HBITMAP hbmp = NULL;
-        pBmp->GetHBITMAP(Gdiplus::Color(0, 0, 0, 0), &hbmp);
-        delete pBmp;
-        if (hbmp)
-        {
-            LogMsg(L"Loaded asset bitmap via GDI+: %s", filename);
-            return hbmp;
-        }
-    }
-    if (pBmp) delete pBmp;
-
-    // Fallback: draw pixel-perfect official Windows Hello Face logo directly in memory
-    LogMsg(L"Generating high-resolution Windows Hello face glyph for tile...");
-    const int iconSize = 128;
-    HDC hdcScreen = GetDC(NULL);
-    HDC hdcMem = CreateCompatibleDC(hdcScreen);
-
     BITMAPINFO bmi = {0};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = iconSize;
-    bmi.bmiHeader.biHeight = -iconSize; // top-down
+    bmi.bmiHeader.biWidth = width;
+    bmi.bmiHeader.biHeight = -height; // Top-down DIB
     bmi.bmiHeader.biPlanes = 1;
     bmi.bmiHeader.biBitCount = 32;
     bmi.bmiHeader.biCompression = BI_RGB;
 
-    void* pBits = NULL;
-    HBITMAP hDIB = CreateDIBSection(hdcMem, &bmi, DIB_RGB_COLORS, &pBits, NULL, 0);
-    HBITMAP hOld = (HBITMAP)SelectObject(hdcMem, hDIB);
+    return CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, ppvBits, NULL, 0);
+}
 
+static HBITMAP LoadAssetBitmap(LPCWSTR filename)
+{
+    const int iconSize = 128;
+    WCHAR pngName[64];
+    StringCchCopyW(pngName, ARRAYSIZE(pngName), filename);
+    // Replace .bmp extension with .png for high-fidelity alpha
+    WCHAR* dot = wcsrchr(pngName, L'.');
+    if (dot) StringCchCopyW(dot, 5, L".png");
+
+    WCHAR assetPath[MAX_PATH] = {0};
+    GetModuleFileNameW(g_hInst, assetPath, ARRAYSIZE(assetPath));
+    PathRemoveFileSpecW(assetPath);
+    PathAppendW(assetPath, L"..\\assets");
+    PathAppendW(assetPath, pngName);
+
+    LogMsg(L"LoadAssetBitmap: attempting to load %s", assetPath);
+
+    Gdiplus::Bitmap* pBmp = Gdiplus::Bitmap::FromFile(assetPath);
+    if (!pBmp || pBmp->GetLastStatus() != Gdiplus::Ok)
     {
-        Gdiplus::Graphics g(hdcMem);
+        // Try original filename (.bmp) if .png was not found
+        if (pBmp) delete pBmp;
+        PathRemoveFileSpecW(assetPath);
+        PathAppendW(assetPath, filename);
+        pBmp = Gdiplus::Bitmap::FromFile(assetPath);
+    }
+
+    if (pBmp && pBmp->GetLastStatus() == Gdiplus::Ok)
+    {
+        int w = pBmp->GetWidth();
+        int h = pBmp->GetHeight();
+        void* pBits = NULL;
+        HBITMAP hDIB = CreatePARGBDIB(w, h, &pBits);
+        if (hDIB && pBits)
+        {
+            Gdiplus::BitmapData bmpData;
+            Gdiplus::Rect rect(0, 0, w, h);
+            // PixelFormat32bppPARGB preserves true 100% transparent alpha (alpha = 0)
+            if (pBmp->LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppPARGB, &bmpData) == Gdiplus::Ok)
+            {
+                memcpy(pBits, bmpData.Scan0, w * h * 4);
+                pBmp->UnlockBits(&bmpData);
+                delete pBmp;
+                LogMsg(L"LoadAssetBitmap: successfully loaded 32-bit PARGB transparent bitmap: %s", pngName);
+                return hDIB;
+            }
+            DeleteObject(hDIB);
+        }
+        delete pBmp;
+    }
+
+    // Fallback: draw pixel-perfect 100% transparent Windows Hello face in memory
+    LogMsg(L"LoadAssetBitmap: drawing vector transparent icon in memory as fallback...");
+    Gdiplus::Bitmap memBmp(iconSize, iconSize, PixelFormat32bppPARGB);
+    {
+        Gdiplus::Graphics g(&memBmp);
         g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-        g.Clear(Gdiplus::Color(0, 0, 0, 0)); // Pure transparent background
+        g.Clear(Gdiplus::Color(0, 0, 0, 0)); // 100% transparent background
 
         Gdiplus::Color white(255, 255, 255, 255);
         Gdiplus::SolidBrush whiteBrush(white);
-        Gdiplus::Pen whitePen(white, 7.0f);
+        Gdiplus::Pen whitePen(white, 7.5f);
         whitePen.SetStartCap(Gdiplus::LineCapRound);
         whitePen.SetEndCap(Gdiplus::LineCapRound);
 
-        // Windows Hello bottom smile arc (from 25 to 155 degrees)
-        g.DrawArc(&whitePen, 20.0f, 20.0f, 88.0f, 88.0f, 25.0f, 130.0f);
+        // Smile arc
+        g.DrawArc(&whitePen, 22.0f, 20.0f, 84.0f, 84.0f, 25.0f, 130.0f);
 
         // Left eye
-        g.FillEllipse(&whiteBrush, 38.0f, 44.0f, 15.0f, 15.0f);
+        g.FillEllipse(&whiteBrush, 40.0f, 44.0f, 14.0f, 14.0f);
 
         // Right eye: wink line or open eye
         if (wcsstr(filename, L"wink"))
         {
-            // Wink horizontal rounded line
-            g.DrawLine(&whitePen, 74.0f, 51.5f, 92.0f, 51.5f);
+            g.DrawLine(&whitePen, 72.0f, 51.0f, 90.0f, 51.0f);
         }
         else
         {
-            g.FillEllipse(&whiteBrush, 75.0f, 44.0f, 15.0f, 15.0f);
+            g.FillEllipse(&whiteBrush, 74.0f, 44.0f, 14.0f, 14.0f);
         }
     }
 
-    SelectObject(hdcMem, hOld);
-    DeleteDC(hdcMem);
-    ReleaseDC(NULL, hdcScreen);
+    void* pBits = NULL;
+    HBITMAP hDIB = CreatePARGBDIB(iconSize, iconSize, &pBits);
+    if (hDIB && pBits)
+    {
+        Gdiplus::BitmapData bmpData;
+        Gdiplus::Rect rect(0, 0, iconSize, iconSize);
+        if (memBmp.LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppPARGB, &bmpData) == Gdiplus::Ok)
+        {
+            memcpy(pBits, bmpData.Scan0, iconSize * iconSize * 4);
+            memBmp.UnlockBits(&bmpData);
+            LogMsg(L"LoadAssetBitmap: in-memory transparent vector bitmap ready.");
+            return hDIB;
+        }
+        DeleteObject(hDIB);
+    }
 
-    return hDIB;
+    return NULL;
 }
 
 static void ExtractJsonString(const char* json, const char* key, WCHAR* outBuf, DWORD maxChars)
