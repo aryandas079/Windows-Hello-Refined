@@ -592,72 +592,36 @@ static void SendKey(WORD vk, bool bExtended = false)
     inputs[1].ki.wScan = inputs[0].ki.wScan;
     inputs[1].ki.dwFlags = (bExtended ? KEYEVENTF_EXTENDEDKEY : 0) | KEYEVENTF_KEYUP;
 
-    SendInput(1, &inputs[0], sizeof(INPUT));
-    Sleep(12);
-    SendInput(1, &inputs[1], sizeof(INPUT));
-    Sleep(12);
+    UINT r1 = SendInput(1, &inputs[0], sizeof(INPUT));
+    Sleep(16);
+    UINT r2 = SendInput(1, &inputs[1], sizeof(INPUT));
+    Sleep(16);
+    if (r1 == 0 || r2 == 0)
+    {
+        LogMsg(L"SendKey(0x%04X) SendInput failed! r1=%u, r2=%u, err=%lu", vk, r1, r2, GetLastError());
+    }
 }
 
-static void SendCharKey(WCHAR ch)
+static void SendUnicodeChar(WCHAR ch)
 {
-    SHORT vkState = VkKeyScanW(ch);
-    if (vkState == -1)
+    INPUT inputs[2] = {0};
+    inputs[0].type = INPUT_KEYBOARD;
+    inputs[0].ki.wVk = 0;
+    inputs[0].ki.wScan = ch;
+    inputs[0].ki.dwFlags = KEYEVENTF_UNICODE;
+
+    inputs[1].type = INPUT_KEYBOARD;
+    inputs[1].ki.wVk = 0;
+    inputs[1].ki.wScan = ch;
+    inputs[1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+
+    UINT r1 = SendInput(1, &inputs[0], sizeof(INPUT));
+    Sleep(18);
+    UINT r2 = SendInput(1, &inputs[1], sizeof(INPUT));
+    Sleep(18);
+    if (r1 == 0 || r2 == 0)
     {
-        // Fallback for special Unicode symbols
-        INPUT charInput[2] = {0};
-        charInput[0].type = INPUT_KEYBOARD;
-        charInput[0].ki.wScan = ch;
-        charInput[0].ki.dwFlags = KEYEVENTF_UNICODE;
-
-        charInput[1].type = INPUT_KEYBOARD;
-        charInput[1].ki.wScan = ch;
-        charInput[1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
-
-        SendInput(1, &charInput[0], sizeof(INPUT));
-        Sleep(12);
-        SendInput(1, &charInput[1], sizeof(INPUT));
-        Sleep(12);
-        return;
-    }
-
-    BYTE vk = LOBYTE(vkState);
-    BYTE shiftState = HIBYTE(vkState);
-    bool bShift = (shiftState & 1) != 0;
-
-    if (bShift)
-    {
-        INPUT shiftDown = {0};
-        shiftDown.type = INPUT_KEYBOARD;
-        shiftDown.ki.wVk = VK_SHIFT;
-        shiftDown.ki.wScan = (WORD)MapVirtualKeyW(VK_SHIFT, MAPVK_VK_TO_VSC);
-        SendInput(1, &shiftDown, sizeof(INPUT));
-        Sleep(8);
-    }
-
-    INPUT keyInp[2] = {0};
-    keyInp[0].type = INPUT_KEYBOARD;
-    keyInp[0].ki.wVk = vk;
-    keyInp[0].ki.wScan = (WORD)MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
-
-    keyInp[1].type = INPUT_KEYBOARD;
-    keyInp[1].ki.wVk = vk;
-    keyInp[1].ki.wScan = keyInp[0].ki.wScan;
-    keyInp[1].ki.dwFlags = KEYEVENTF_KEYUP;
-
-    SendInput(1, &keyInp[0], sizeof(INPUT));
-    Sleep(12);
-    SendInput(1, &keyInp[1], sizeof(INPUT));
-    Sleep(12);
-
-    if (bShift)
-    {
-        INPUT shiftUp = {0};
-        shiftUp.type = INPUT_KEYBOARD;
-        shiftUp.ki.wVk = VK_SHIFT;
-        shiftUp.ki.wScan = (WORD)MapVirtualKeyW(VK_SHIFT, MAPVK_VK_TO_VSC);
-        shiftUp.ki.dwFlags = KEYEVENTF_KEYUP;
-        SendInput(1, &shiftUp, sizeof(INPUT));
-        Sleep(8);
+        LogMsg(L"SendUnicodeChar('%c') SendInput failed! r1=%u, r2=%u, err=%lu", ch, r1, r2, GetLastError());
     }
 }
 
@@ -674,57 +638,51 @@ static void SimulatePinInput(LPCWSTR pszPin)
         LogMsg(L"SimulatePinInput: attached to input desktop.");
     }
 
-    // Step 1: Dismiss lock screen curtain (Spacebar) to reveal the LogonUI PIN interface
-    LogMsg(L"SimulatePinInput: dismissing lock screen curtain...");
-    SendKey(VK_SPACE);
+    // Step 1: Dismiss lock screen curtain cleanly via simulated mouse click at center of screen
+    int screenW = GetSystemMetrics(SM_CXSCREEN);
+    int screenH = GetSystemMetrics(SM_CYSCREEN);
+    if (screenW <= 0) screenW = 1920;
+    if (screenH <= 0) screenH = 1080;
 
-    // Wait 450ms for Windows 11 lock screen curtain slide-up animation to complete
-    // and for LogonUI's PIN edit control to gain active keyboard focus
-    Sleep(450);
+    LogMsg(L"SimulatePinInput: dismissing lock screen curtain via mouse click (%d, %d)...", screenW / 2, screenH / 2);
+    INPUT mouseClick[2] = {0};
+    mouseClick[0].type = INPUT_MOUSE;
+    mouseClick[0].mi.dx = (screenW / 2) * 65536 / screenW;
+    mouseClick[0].mi.dy = (screenH / 2) * 65536 / screenH;
+    mouseClick[0].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | MOUSEEVENTF_LEFTDOWN;
 
-    // Step 2: Ensure PIN box is completely clean and empty (Ctrl+A then Backspace)
-    INPUT ctrlA[4] = {0};
-    ctrlA[0].type = INPUT_KEYBOARD;
-    ctrlA[0].ki.wVk = VK_CONTROL;
-    ctrlA[0].ki.wScan = (WORD)MapVirtualKeyW(VK_CONTROL, MAPVK_VK_TO_VSC);
+    mouseClick[1].type = INPUT_MOUSE;
+    mouseClick[1].mi.dx = mouseClick[0].mi.dx;
+    mouseClick[1].mi.dy = mouseClick[0].mi.dy;
+    mouseClick[1].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTUP;
 
-    ctrlA[1].type = INPUT_KEYBOARD;
-    ctrlA[1].ki.wVk = 'A';
-    ctrlA[1].ki.wScan = (WORD)MapVirtualKeyW('A', MAPVK_VK_TO_VSC);
+    SendInput(2, mouseClick, sizeof(INPUT));
 
-    ctrlA[2].type = INPUT_KEYBOARD;
-    ctrlA[2].ki.wVk = 'A';
-    ctrlA[2].ki.wScan = ctrlA[1].ki.wScan;
-    ctrlA[2].ki.dwFlags = KEYEVENTF_KEYUP;
+    // Also send Enter to wake lock screen cleanly without adding spaces
+    Sleep(120);
+    SendKey(VK_RETURN);
 
-    ctrlA[3].type = INPUT_KEYBOARD;
-    ctrlA[3].ki.wVk = VK_CONTROL;
-    ctrlA[3].ki.wScan = ctrlA[0].ki.wScan;
-    ctrlA[3].ki.dwFlags = KEYEVENTF_KEYUP;
+    // Wait 400ms for lock screen curtain slide-up animation to complete
+    Sleep(400);
 
-    SendInput(4, ctrlA, sizeof(INPUT));
-    Sleep(15);
-
-    SendKey(VK_BACK);
-    Sleep(15);
-
-    for (int b = 0; b < 4; b++)
+    // Step 2: Clear any accidental or previous input from the password/PIN box
+    for (int b = 0; b < 10; b++)
     {
         SendKey(VK_BACK);
     }
-    Sleep(20);
+    Sleep(25);
 
-    // Step 3: Type each character with hardware virtual keys, scan codes, and shift modifiers
-    LogMsg(L"SimulatePinInput: typing PIN characters...");
+    // Step 3: Type each character with hardware Unicode packets (KEYEVENTF_UNICODE)
+    LogMsg(L"SimulatePinInput: typing password/PIN characters with KEYEVENTF_UNICODE...");
     for (size_t i = 0; i < wcslen(pszPin); i++)
     {
-        SendCharKey(pszPin[i]);
+        SendUnicodeChar(pszPin[i]);
     }
 
-    // Step 4: Submit PIN with Enter
-    Sleep(60);
+    // Step 4: Submit password/PIN with Enter
+    Sleep(80);
     SendKey(VK_RETURN);
-    LogMsg(L"SimulatePinInput: PIN entered and submitted.");
+    LogMsg(L"SimulatePinInput: password/PIN entered and submitted.");
 
     if (hInputDesk)
     {
@@ -902,15 +860,18 @@ void FaceCredential::DoVerification()
                 }
             }
 
-            if (wcslen(m_pin) > 0)
+            LPCWSTR secret = (m_hasPassword && wcslen(m_password) > 0) ? m_password : m_pin;
+
+            if (m_pProvider)
             {
-                LogMsg(L"Face verified! Triggering PIN unlock (%d characters)...", (int)wcslen(m_pin));
-                SimulatePinInput(m_pin);
-            }
-            else if (m_hasPassword && m_pProvider)
-            {
-                LogMsg(L"Triggering CredentialsChanged for password automatic unlock...");
+                LogMsg(L"Face verified! Triggering CredentialsChanged for native automatic unlock...");
                 m_pProvider->OnFaceVerified();
+            }
+
+            if (wcslen(secret) > 0)
+            {
+                LogMsg(L"Face verified! Triggering password/PIN auto-fill (%d characters)...", (int)wcslen(secret));
+                SimulatePinInput(secret);
             }
         }
         else
@@ -1074,22 +1035,25 @@ HRESULT FaceCredential::GetSerialization(CREDENTIAL_PROVIDER_GET_SERIALIZATION_R
                                         LPWSTR* ppszOptionalStatusText,
                                         CREDENTIAL_PROVIDER_STATUS_ICON* pcpsiOptionalStatusIcon)
 {
-    LogMsg(L"FaceCredential::GetSerialization called (m_bVerified=%d, m_hasPassword=%d)", m_bVerified, m_hasPassword);
+    LogMsg(L"FaceCredential::GetSerialization called (m_bVerified=%d, m_hasPassword=%d, pinLen=%d)", m_bVerified, m_hasPassword, (int)wcslen(m_pin));
     if (!pcpgsr || !pcpcs) return E_POINTER;
 
-    if (m_bVerified && m_hasPassword)
+    LPCWSTR secret = (m_hasPassword && wcslen(m_password) > 0) ? m_password : m_pin;
+
+    if (m_bVerified && secret && wcslen(secret) > 0)
     {
         ULONG ulPackage = 0;
         BYTE* pBuffer = NULL;
         DWORD cbBuffer = 0;
-        HRESULT hr = PackLogonCredentials(m_domain, m_username, m_password, &ulPackage, &pBuffer, &cbBuffer);
+        HRESULT hr = PackLogonCredentials(m_domain, m_username, secret, &ulPackage, &pBuffer, &cbBuffer);
         if (SUCCEEDED(hr))
         {
             *pcpgsr = CPGSR_RETURN_CREDENTIAL_FINISHED;
             pcpcs->ulAuthenticationPackage = ulPackage;
             pcpcs->cbSerialization = cbBuffer;
             pcpcs->rgbSerialization = pBuffer;
-            LogMsg(L"GetSerialization: Returned credentials buffer for %s! Unlocking workstation.", m_username);
+            pcpcs->clsidCredentialProvider = CLSID_FaceCredentialProvider;
+            LogMsg(L"GetSerialization: Successfully returned packed credentials for %s! Unlocking workstation via LSA.", m_username);
             return S_OK;
         }
         else
@@ -1098,8 +1062,6 @@ HRESULT FaceCredential::GetSerialization(CREDENTIAL_PROVIDER_GET_SERIALIZATION_R
         }
     }
 
-    // If no password stored or packing failed, return NO_CREDENTIAL_FINISHED
-    // so LogonUI never attempts a failed logon and never disables the user's PIN!
     *pcpgsr = CPGSR_NO_CREDENTIAL_FINISHED;
     return S_OK;
 }
