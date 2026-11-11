@@ -99,11 +99,17 @@ if not exist "%DLL%" (
     )
 )
 
-regsvr32 /s "%DLL%"
+:: Direct registry registration for high reliability
+reg add "HKCR\CLSID\%GUID%\InprocServer32" /ve /d "%DLL%" /f >nul 2>&1
+reg add "HKCR\CLSID\%GUID%\InprocServer32" /v "ThreadingModel" /d "Apartment" /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Classes\CLSID\%GUID%\InprocServer32" /ve /d "%DLL%" /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Classes\CLSID\%GUID%\InprocServer32" /v "ThreadingModel" /d "Apartment" /f >nul 2>&1
 
-reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\%GUID%" /ve /d "WindowsHelloRefined" /f >nul
-reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\%GUID%" /v "Disabled" /t REG_DWORD /d 0 /f >nul
-reg add "HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\%GUID%" /ve /d "WindowsHelloRefined" /f >nul
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\%GUID%" /ve /d "WindowsHelloRefined" /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\%GUID%" /v "Disabled" /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\%GUID%" /ve /d "WindowsHelloRefined" /f >nul 2>&1
+
+regsvr32 /s "%DLL%"
 echo       Credential provider registered in Windows LogonUI.
 echo.
 

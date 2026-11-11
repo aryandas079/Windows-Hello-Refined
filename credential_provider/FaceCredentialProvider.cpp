@@ -37,6 +37,7 @@ FaceCredentialProvider::FaceCredentialProvider() :
     m_pszUserSid(nullptr),
     m_bHasUsers(FALSE)
 {
+    EnsureGdiplus();
 }
 
 FaceCredentialProvider::~FaceCredentialProvider()
@@ -52,6 +53,7 @@ FaceCredentialProvider::~FaceCredentialProvider()
         m_pEvents->Release();
         m_pEvents = nullptr;
     }
+    ReleaseGdiplus();
 }
 
 void FaceCredentialProvider::CleanUpUsers()

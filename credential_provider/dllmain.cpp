@@ -6,6 +6,28 @@
 HINSTANCE g_hInst = NULL;
 long g_cDllRef = 0;
 static ULONG_PTR g_gdiplusToken = 0;
+static long g_gdiRefCount = 0;
+
+void EnsureGdiplus()
+{
+    if (InterlockedIncrement(&g_gdiRefCount) == 1)
+    {
+        Gdiplus::GdiplusStartupInput gdiInput;
+        Gdiplus::GdiplusStartup(&g_gdiplusToken, &gdiInput, NULL);
+    }
+}
+
+void ReleaseGdiplus()
+{
+    if (InterlockedDecrement(&g_gdiRefCount) == 0)
+    {
+        if (g_gdiplusToken)
+        {
+            Gdiplus::GdiplusShutdown(g_gdiplusToken);
+            g_gdiplusToken = 0;
+        }
+    }
+}
 
 class CClassFactory : public IClassFactory
 {
@@ -62,16 +84,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
     {
         g_hInst = hinstDLL;
         DisableThreadLibraryCalls(hinstDLL);
-        Gdiplus::GdiplusStartupInput gdiInput;
-        Gdiplus::GdiplusStartup(&g_gdiplusToken, &gdiInput, NULL);
-    }
-    else if (fdwReason == DLL_PROCESS_DETACH)
-    {
-        if (g_gdiplusToken)
-        {
-            Gdiplus::GdiplusShutdown(g_gdiplusToken);
-            g_gdiplusToken = 0;
-        }
     }
     return TRUE;
 }

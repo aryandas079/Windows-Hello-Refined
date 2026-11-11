@@ -34,3 +34,6 @@ enum FACE_PROVIDER_FIELDS
     FPF_SUBMIT_BUTTON,
     FPF_NUM_FIELDS
 };
+
+void EnsureGdiplus();
+void ReleaseGdiplus();

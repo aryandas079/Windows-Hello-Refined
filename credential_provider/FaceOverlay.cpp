@@ -1,4 +1,5 @@
 #include "FaceOverlay.h"
+#include "common.h"
 #include <strsafe.h>
 #include <cmath>
 
@@ -35,6 +36,7 @@ FaceOverlay::FaceOverlay() :
     m_winkProgress(0.0f),
     m_fadeAlpha(1.0f)
 {
+    EnsureGdiplus();
     InitializeCriticalSection(&m_cs);
     StringCchCopyW(m_username, ARRAYSIZE(m_username), L"Aryan");
     StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Looking for you...");
@@ -44,6 +46,7 @@ FaceOverlay::~FaceOverlay()
 {
     Hide();
     DeleteCriticalSection(&m_cs);
+    ReleaseGdiplus();
 }
 
 LRESULT CALLBACK FaceOverlay::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)

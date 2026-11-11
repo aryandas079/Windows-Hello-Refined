@@ -17,6 +17,7 @@ data/
 *.pdb
 *.tlog
 *.idb
+*.old
 
 # Windows
 Thumbs.db
