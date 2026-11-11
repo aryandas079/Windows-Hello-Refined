@@ -657,7 +657,11 @@ static void SimulatePinInput(LPCWSTR pszPin, bool bIsCredUI = false)
     HDESK hInputDesk = NULL;
     if (!bIsCredUI)
     {
-        hInputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
+        hInputDesk = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_HOOKCONTROL | DESKTOP_JOURNALRECORD | DESKTOP_JOURNALPLAYBACK);
+        if (!hInputDesk)
+        {
+            hInputDesk = OpenDesktopW(L"Winlogon", 0, FALSE, DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_HOOKCONTROL | DESKTOP_JOURNALRECORD | DESKTOP_JOURNALPLAYBACK);
+        }
         if (hInputDesk)
         {
             SetThreadDesktop(hInputDesk);
@@ -667,10 +671,10 @@ static void SimulatePinInput(LPCWSTR pszPin, bool bIsCredUI = false)
 
     if (!bIsCredUI)
     {
-        // Step 1: Lock screen wake curtain with Spacebar and wait for slide-up
-        LogMsg(L"SimulatePinInput: waking/dismissing lock screen curtain with Spacebar...");
+        // Step 1: Dismiss lock screen curtain with Spacebar and wait for full XAML slide-up
+        LogMsg(L"SimulatePinInput: dismissing lock screen curtain with Spacebar...");
         SendKey(VK_SPACE);
-        Sleep(400);
+        Sleep(850);
     }
     else
     {
@@ -892,8 +896,16 @@ void FaceCredential::DoVerification()
 
             if (wcslen(secret) > 0)
             {
-                // Wait for the wink animation and audio chime (~750ms)
-                Sleep(750);
+                if (!bIsCredUI)
+                {
+                    // WAKE / DISMISS CURTAIN IMMEDIATELY when face is verified!
+                    // The curtain starts sliding away concurrently while wink & chime play
+                    LogMsg(L"Face verified: dismissing lock screen curtain during animation...");
+                    SendKey(VK_SPACE);
+                }
+
+                // Wait for the wink animation and audio chime (~800ms)
+                Sleep(800);
 
                 LogMsg(L"Face verified! Triggering initial password/PIN auto-fill (%d characters, bIsCredUI=%d)...",
                        (int)wcslen(secret), bIsCredUI);

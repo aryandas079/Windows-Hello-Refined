@@ -178,16 +178,16 @@ class FaceEngine:
         """
         Multi-stage adaptive low-light enhancement.
         Stage 1 - brightness measurement.
-        Stage 2 - gamma boost for frames with mean brightness < 50.
-        Stage 3 - CLAHE on LAB L-channel.
-        Stage 4 - histogram equalization for extreme darkness (<20).
+        Stage 2 - adaptive gamma boost for frames with mean brightness < 65.
+        Stage 3 - CLAHE on LAB L-channel with dynamic clip limit.
+        Stage 4 - histogram equalization for extreme darkness (<25).
         """
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         mean_brightness = float(np.mean(gray))
 
-        # Gamma correction for dark scenes
-        if mean_brightness < 50.0:
-            gamma = max(0.3, mean_brightness / 90.0)
+        # Adaptive gamma curve: smooth logarithmic mapping for dark scenes
+        if mean_brightness < 65.0:
+            gamma = max(0.28, mean_brightness / 85.0)
             inv_gamma = 1.0 / max(gamma, 0.1)
             lut = np.array(
                 [min(255, int((i / 255.0) ** inv_gamma * 255)) for i in range(256)],
@@ -195,16 +195,93 @@ class FaceEngine:
             )
             frame = cv2.LUT(frame, lut)
 
-        # CLAHE on LAB L-channel
+        # CLAHE on LAB L-channel with adaptive clip limit
         lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
         l, a, b = cv2.split(lab)
-        l_enh = self.clahe.apply(l)
+        clip = 4.0 if mean_brightness < 45.0 else 2.5
+        clahe = cv2.createCLAHE(clipLimit=clip, tileGridSize=(8, 8))
+        l_enh = clahe.apply(l)
 
         # Extreme dark: also equalize
-        if mean_brightness < 20.0:
+        if mean_brightness < 25.0:
             l_enh = cv2.equalizeHist(l_enh)
 
         return cv2.cvtColor(cv2.merge((l_enh, a, b)), cv2.COLOR_LAB2BGR)
+
+    def check_screen_bezel(self, frame, face):
+        """
+        Detects digital screen frames and mobile phone bezels.
+        Examines margins surrounding the face for long straight vertical and
+        horizontal edge segments characteristic of phone bodies and screen bezels.
+        """
+        H, W = frame.shape[:2]
+        fx, fy, fw, fh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
+        pad_x = int(fw * 0.75)
+        pad_y = int(fh * 0.75)
+        bx1 = max(0, fx - pad_x)
+        by1 = max(0, fy - pad_y)
+        bx2 = min(W, fx + fw + pad_x)
+        by2 = min(H, fy + fh + pad_y)
+
+        if bx2 - bx1 < 60 or by2 - by1 < 60:
+            return False
+
+        surround = frame[by1:by2, bx1:bx2]
+        gray = cv2.cvtColor(surround, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blurred, 50, 160)
+
+        min_line_len = int(fh * 0.45)
+        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=70, minLineLength=min_line_len, maxLineGap=12)
+        if lines is None:
+            return False
+
+        lines = lines.reshape(-1, 4)
+        fc_x1 = fx - bx1
+        fc_y1 = fy - by1
+        fc_x2 = fc_x1 + fw
+        fc_y2 = fc_y1 + fh
+
+        vert_bezel = 0
+        horiz_bezel = 0
+
+        for x1, y1, x2, y2 in lines:
+            # Skip lines strictly inside the face core
+            if x1 > fc_x1 + 10 and x2 < fc_x2 - 10 and y1 > fc_y1 + 10 and y2 < fc_y2 - 10:
+                continue
+            angle = np.abs(np.arctan2(y2 - y1, x2 - x1) * 180.0 / np.pi)
+            if 78.0 <= angle <= 102.0:
+                vert_bezel += 1
+            elif angle <= 12.0 or angle >= 168.0:
+                horiz_bezel += 1
+
+        return (vert_bezel >= 3) or (vert_bezel >= 2 and horiz_bezel >= 2) or (horiz_bezel >= 4)
+
+    def check_screen_frequency(self, gray_roi):
+        """
+        2D Fourier Transform (FFT) analysis of facial skin micro-texture.
+        Detects periodic subpixel raster grids and moire frequencies of LCD/OLED screens.
+        """
+        h, w = gray_roi.shape
+        if h < 32 or w < 32:
+            return False, 0.0
+
+        f = np.fft.fft2(gray_roi)
+        fshift = np.fft.fftshift(f)
+        magnitude = 20.0 * np.log(np.abs(fshift) + 1e-6)
+
+        cy, cx = h // 2, w // 2
+        y, x = np.ogrid[:h, :w]
+        dist_from_center = np.sqrt((x - cx) ** 2 + (y - cy) ** 2)
+        r_max = min(cy, cx)
+
+        high_freq_mask = dist_from_center > (r_max * 0.55)
+        hf_energy = float(np.mean(magnitude[high_freq_mask]))
+        lf_energy = float(np.mean(magnitude[~high_freq_mask]))
+        ratio = hf_energy / (lf_energy + 1e-6)
+
+        is_screen = (ratio > 0.82)
+        return is_screen, ratio
 
     # ------------------------------------------------------------------
     # Detection
@@ -279,12 +356,21 @@ class FaceEngine:
         face_roi = frame[y1:y2, x1:x2]
         gray_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
 
+        # Layer 0: Screen bezel / mobile phone chassis detection
+        if self.check_screen_bezel(frame, face):
+            return False, 0.08, "Digital screen / phone bezel detected (phone spoof)"
+
         # Layer 1: Laplacian texture frequency & screen pixel raster bounds
         lap_var = float(cv2.Laplacian(gray_roi, cv2.CV_64F).var())
         if lap_var < 15.0:
             return False, 0.10, "Extreme blur or flat surface detected"
         if lap_var > 550.0:
             return False, 0.10, "Digital screen subpixel raster / moire detected (phone spoof)"
+
+        # 2D FFT periodic subpixel frequency check (detects OLED/LCD screen grids)
+        is_raster, r_ratio = self.check_screen_frequency(gray_roi)
+        if is_raster:
+            return False, 0.10, "Display subpixel raster grid detected (screen spoof)"
 
         # Layer 2: Biological hemoglobin spectral reflectance (B/R absorption ratio)
         # Real living human tissue exhibits deep capillary red reflectance (B/R < 0.90).
@@ -328,6 +414,11 @@ class FaceEngine:
         # Layer 6: MediaPipe 478 3D landmark depth curvature
         landmarks, blendshapes = self.get_face_landmarks_478(frame)
         if landmarks is None or len(landmarks) < 468:
+            # Fallback to enhanced frame if room lighting is dim
+            enh = self.preprocess_lighting(frame)
+            landmarks, blendshapes = self.get_face_landmarks_478(enh)
+
+        if landmarks is None or len(landmarks) < 468:
             return False, 0.20, "MediaPipe 478 landmarks not registered"
 
         zs = [lm.z for lm in landmarks]
@@ -351,7 +442,6 @@ class FaceEngine:
         ear_val = float((ear_l + ear_r) / 2.0)
 
         self._ear_values.append(ear_val)
-        self._blink_history.append(ear_val < _EAR_BLINK_THRESHOLD)
 
         # Track blendshape eye/brow values if available
         bs_eye = 0.0
@@ -360,28 +450,30 @@ class FaceEngine:
             bs_eye = float((bs_dict.get('eyeBlinkLeft', 0.0) + bs_dict.get('eyeBlinkRight', 0.0)) / 2.0)
             self._blendshape_history.append(bs_eye)
 
-        # Check for blink transition (open -> closed -> open)
-        if len(self._blink_history) >= 4:
-            hist = list(self._blink_history)
-            transitions = sum(1 for i in range(1, len(hist)) if hist[i] != hist[i - 1])
-            if transitions >= 2:
+        # Genuine living blink detection:
+        # A static photo on phone/paper has static eye openness (bs_eye ~ const, ear_val ~ const).
+        # A living blink requires:
+        # 1. EAR dip: min(ear) < 0.20 AND max(ear) > 0.24 (ear_span >= 0.065)
+        # 2. OR Blendshape eyeBlink spike: max(bs_eye) - min(bs_eye) >= 0.35
+        if len(self._ear_values) >= 5:
+            ear_min = min(self._ear_values)
+            ear_max = max(self._ear_values)
+            ear_span = ear_max - ear_min
+
+            bs_span = 0.0
+            if len(self._blendshape_history) >= 5:
+                bs_span = max(self._blendshape_history) - min(self._blendshape_history)
+
+            if (ear_span >= 0.065 and ear_min < 0.20 and ear_max > 0.24) or (bs_span >= 0.35):
                 blink_verified = True
 
-        # Require an observation window: never grant full liveness on initial 1-4 frames!
-        # Static photos on a phone or paper have near-zero ocular micro-tremor across frames.
         if len(self._ear_values) < 5:
             dynamic_score = 0.20
         elif blink_verified:
             dynamic_score = 1.0
         else:
-            ear_std = float(np.std(self._ear_values))
-            bs_std = float(np.std(self._blendshape_history)) if len(self._blendshape_history) >= 5 else 0.0
-            if ear_std < 0.0013 and bs_std < 0.0011:
-                return False, 0.10, "Static photo spoof detected (no ocular micro-movement or blink)"
-            elif ear_std >= 0.0020 or bs_std >= 0.0016:
-                dynamic_score = 0.92
-            else:
-                dynamic_score = 0.40
+            # Without a confirmed blink, static photos must NEVER pass as live!
+            dynamic_score = 0.20
 
         # Natural skin texture score: peaks in [80, 260], decays smoothly outside
         if lap_var <= 200.0:
@@ -400,6 +492,9 @@ class FaceEngine:
             depth_score   * 0.20 +
             dynamic_score * 0.25
         )
+
+        if not blink_verified:
+            return False, min(0.60, liveness_score), "Waiting for eye blink verification"
 
         if liveness_score < 0.65:
             return False, liveness_score, f"Liveness check failed (score={liveness_score:.2f})"

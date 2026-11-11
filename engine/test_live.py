@@ -68,9 +68,14 @@ def run_live_test(camera_index=0):
                 x, y, fw, fh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
 
                 if not is_live:
-                    status_text = f"SPOOF DETECTED: {live_msg}"
-                    status_color = (0, 0, 255)  # Red
-                    score_text = f"Liveness Score: {live_score * 100:.1f}% | Anti-Spoof: REJECTED"
+                    if "blink" in live_msg.lower():
+                        status_text = "LOOKING FOR YOU... PLEASE BLINK TO UNLOCK"
+                        status_color = (0, 215, 255)  # Bright Gold / Yellow
+                        score_text = f"Liveness: {live_score * 100:.1f}% | Waiting for genuine blink..."
+                    else:
+                        status_text = f"SPOOF DETECTED: {live_msg}"
+                        status_color = (0, 0, 255)  # Red
+                        score_text = f"Liveness Score: {live_score * 100:.1f}% | Anti-Spoof: REJECTED"
                     cv2.rectangle(frame, (x, y), (x + fw, y + fh), status_color, 2)
                 else:
                     query_feature = engine.extract_features(enhanced, face)

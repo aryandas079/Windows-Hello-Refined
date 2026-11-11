@@ -212,12 +212,12 @@ void FaceOverlay::RunAnimation()
     int posX = mi.rcWork.left + (monW - winW) / 2;
     int posY = mi.rcWork.top + 45; // Default near top (lock screen under camera)
 
-    if (m_scenario == 4) // CPUS_CREDUI (Windows Security dialog)
+    bool bIsCredUI = (m_scenario == CPUS_CREDUI || m_scenario == 3 || (hwndSec != NULL && IsWindowVisible(hwndSec)));
+
+    if (bIsCredUI)
     {
-        // On modern Windows 11, the CredUI dialog card is horizontally and vertically centered.
-        // The 9-dot PIN keypad icon and "Enter your PIN" text are located at cardCenterY - 74.
-        // Placing the overlay (height 160) at cardCenterY - 118 centers the face icon (cy = 44)
-        // directly over the 9-dot PIN icon, and the status text directly over "Enter your PIN"!
+        // In CredUI (Windows Security dialog), replace the 9-dot PIN keypad icon and "Enter your PIN".
+        // The dialog is centered on screen.
         int cardCenterX = mi.rcWork.left + (monW / 2);
         int cardCenterY = mi.rcWork.top + (monH / 2);
 
@@ -233,7 +233,7 @@ void FaceOverlay::RunAnimation()
 
         posX = cardCenterX - winW / 2;
         posY = cardCenterY - 118;
-        LogOverlay(L"CredUI dialog scenario 4: overlay positioned over PIN icon at (%d,%d)", posX, posY);
+        LogOverlay(L"CredUI dialog scenario: overlay positioned over PIN icon at (%d,%d)", posX, posY);
     }
 
     m_hwnd = CreateWindowExW(
@@ -301,8 +301,32 @@ void FaceOverlay::RunAnimation()
             DispatchMessageW(&msg);
         }
 
+        // For CredUI dialog, ensure overlay follows dialog position if it appears or moves
+        HWND hwndSecLoop = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
+        if (!hwndSecLoop) hwndSecLoop = FindWindowW(NULL, L"Windows Security");
+        if (!hwndSecLoop) hwndSecLoop = FindWindowW(L"Credential Dialog Xaml Host", NULL);
+
+        if ((m_scenario == CPUS_CREDUI || m_scenario == 3 || hwndSecLoop) && hwndSecLoop && IsWindowVisible(hwndSecLoop))
+        {
+            RECT rcSec;
+            if (GetWindowRect(hwndSecLoop, &rcSec))
+            {
+                int cardCenterX = rcSec.left + (rcSec.right - rcSec.left) / 2;
+                int cardCenterY = rcSec.top + (rcSec.bottom - rcSec.top) / 2;
+                int targetX = cardCenterX - winW / 2;
+                int targetY = cardCenterY - 118;
+                if (targetX != posX || targetY != posY)
+                {
+                    posX = targetX;
+                    posY = targetY;
+                    ptDst.x = posX;
+                    ptDst.y = posY;
+                }
+            }
+        }
+
         // Maintain topmost Z-order at the anchored position
-        SetWindowPos(m_hwnd, HWND_TOPMOST, posX, posY, winW, winH, SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOSIZE | SWP_NOMOVE);
+        SetWindowPos(m_hwnd, HWND_TOPMOST, posX, posY, winW, winH, SWP_NOACTIVATE | SWP_NOREDRAW);
 
         EnterCriticalSection(&m_cs);
         OVERLAY_STATE curState = m_state;
@@ -411,7 +435,8 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
     float cx = width / 2.0f;
     float cy = 44.0f;
 
-    bool bIsCredUI = (m_scenario == 4);
+    bool bIsCredUI = (m_scenario == CPUS_CREDUI || m_scenario == 3 ||
+                      FindWindowW(L"Credential Dialog Xaml Host", NULL) != NULL);
     bool bLightTheme = false;
 
     if (bIsCredUI)
