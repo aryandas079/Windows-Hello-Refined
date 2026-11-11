@@ -2,8 +2,12 @@
 #include "common.h"
 #include <strsafe.h>
 #include <cmath>
+#include <mmsystem.h>
+#include <shlwapi.h>
 
 #pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "winmm.lib")
+#pragma comment(lib, "shlwapi.lib")
 
 extern HINSTANCE g_hInst;
 
@@ -25,6 +29,46 @@ static void LogOverlay(const WCHAR* fmt, ...)
     }
 }
 
+static void PlayFeedbackSound()
+{
+    WCHAR assetPath[MAX_PATH] = {0};
+    if (GetModuleFileNameW(g_hInst, assetPath, ARRAYSIZE(assetPath)))
+    {
+        PathRemoveFileSpecW(assetPath);
+        PathRemoveFileSpecW(assetPath);
+        PathAppendW(assetPath, L"assets\\hello_verified.wav");
+    }
+
+    LPCWSTR targetSound = NULL;
+    if (PathFileExistsW(assetPath))
+    {
+        targetSound = assetPath;
+    }
+    else if (PathFileExistsW(L"C:\\Windows\\Media\\Windows Notify.wav"))
+    {
+        targetSound = L"C:\\Windows\\Media\\Windows Notify.wav";
+    }
+    else if (PathFileExistsW(L"C:\\Windows\\Media\\Windows Unlock.wav"))
+    {
+        targetSound = L"C:\\Windows\\Media\\Windows Unlock.wav";
+    }
+
+    if (targetSound)
+    {
+        LogOverlay(L"PlayFeedbackSound: playing %s asynchronously", targetSound);
+        BOOL bPlayed = PlaySoundW(targetSound, NULL, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
+        if (!bPlayed)
+        {
+            LogOverlay(L"PlayFeedbackSound: PlaySoundW returned FALSE (err=%lu), trying MessageBeep", GetLastError());
+            MessageBeep(MB_OK);
+        }
+    }
+    else
+    {
+        MessageBeep(MB_OK);
+    }
+}
+
 FaceOverlay::FaceOverlay() :
     m_hwnd(NULL),
     m_hThread(NULL),
@@ -32,6 +76,7 @@ FaceOverlay::FaceOverlay() :
     m_state(OVERLAY_HIDDEN),
     m_startTime(0),
     m_verifiedTime(0),
+    m_bPlayedWinkSound(false),
     m_spinProgress(0.0f),
     m_winkProgress(0.0f),
     m_fadeAlpha(1.0f)
@@ -85,6 +130,7 @@ void FaceOverlay::SetState(OVERLAY_STATE state, const WCHAR* customText)
     if (state == OVERLAY_VERIFIED)
     {
         m_verifiedTime = GetTickCount();
+        m_bPlayedWinkSound = false;
         if (customText)
         {
             StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), customText);
@@ -241,6 +287,12 @@ void FaceOverlay::RunAnimation()
             {
                 float wt = (float)(elapsed - 750) / 300.0f;
                 m_winkProgress = std::sin(wt * 3.14159265f);
+
+                if (!m_bPlayedWinkSound)
+                {
+                    m_bPlayedWinkSound = true;
+                    PlayFeedbackSound();
+                }
             }
             else
             {
