@@ -53,16 +53,17 @@ def load_profile():
         print(f"Error loading face profile: {e}")
         return None
 
-def save_credentials(username, password, domain=""):
+def save_credentials(username, password="", domain="", pin=""):
     """
-    Encrypts user logon credentials using Windows DPAPI.
+    Encrypts user logon credentials (PIN or Password) using Windows DPAPI.
     Enables automatic zero-touch workstation unlock on successful face match.
     """
     os.makedirs(PROFILE_DIR, exist_ok=True)
     payload = {
         "username": username,
         "password": password,
-        "domain": domain
+        "domain": domain,
+        "pin": pin
     }
     raw_data = pickle.dumps(payload)
     encrypted_blob = win32crypt.CryptProtectData(

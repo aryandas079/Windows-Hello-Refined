@@ -169,6 +169,7 @@ FaceCredential::FaceCredential() :
     StringCchCopyW(m_username, ARRAYSIZE(m_username), L"Aryan");
     StringCchCopyW(m_domain, ARRAYSIZE(m_domain), L"");
     StringCchCopyW(m_password, ARRAYSIZE(m_password), L"");
+    StringCchCopyW(m_pin, ARRAYSIZE(m_pin), L"");
     StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Windows Hello: Looking for you...");
     LogMsg(L"FaceCredential constructor called");
 }
@@ -564,6 +565,76 @@ static void ExtractJsonString(const char* json, const char* key, WCHAR* outBuf, 
     MultiByteToWideChar(CP_UTF8, 0, val, -1, outBuf, maxChars);
 }
 
+static void SimulatePinInput(LPCWSTR pszPin)
+{
+    if (!pszPin || wcslen(pszPin) == 0) return;
+
+    LogMsg(L"SimulatePinInput: starting simulation for %d characters...", (int)wcslen(pszPin));
+
+    HDESK hInputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
+    if (hInputDesk)
+    {
+        SetThreadDesktop(hInputDesk);
+        CloseDesktop(hInputDesk);
+    }
+
+    // Step 1: Send VK_UP to dismiss lock curtain if wallpaper is currently showing
+    INPUT wakeUp[2] = {0};
+    wakeUp[0].type = INPUT_KEYBOARD;
+    wakeUp[0].ki.wVk = VK_UP;
+    wakeUp[1].type = INPUT_KEYBOARD;
+    wakeUp[1].ki.wVk = VK_UP;
+    wakeUp[1].ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(2, wakeUp, sizeof(INPUT));
+
+    // Wait 350ms for lock curtain to slide up and focus the PIN box
+    Sleep(350);
+
+    // Step 2: Send Backspaces to clear any partial input in the PIN box
+    for (int b = 0; b < 6; b++)
+    {
+        INPUT bs[2] = {0};
+        bs[0].type = INPUT_KEYBOARD;
+        bs[0].ki.wVk = VK_BACK;
+        bs[1].type = INPUT_KEYBOARD;
+        bs[1].ki.wVk = VK_BACK;
+        bs[1].ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput(2, bs, sizeof(INPUT));
+        Sleep(20);
+    }
+
+    Sleep(50);
+
+    // Step 3: Type each character of the PIN
+    for (size_t i = 0; i < wcslen(pszPin); i++)
+    {
+        WCHAR ch = pszPin[i];
+        INPUT charInput[2] = {0};
+        charInput[0].type = INPUT_KEYBOARD;
+        charInput[0].ki.wScan = ch;
+        charInput[0].ki.dwFlags = KEYEVENTF_UNICODE;
+
+        charInput[1].type = INPUT_KEYBOARD;
+        charInput[1].ki.wScan = ch;
+        charInput[1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+
+        SendInput(2, charInput, sizeof(INPUT));
+        Sleep(35);
+    }
+
+    // Step 4: Send Enter to submit the PIN
+    Sleep(80);
+    INPUT enter[2] = {0};
+    enter[0].type = INPUT_KEYBOARD;
+    enter[0].ki.wVk = VK_RETURN;
+    enter[1].type = INPUT_KEYBOARD;
+    enter[1].ki.wVk = VK_RETURN;
+    enter[1].ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(2, enter, sizeof(INPUT));
+
+    LogMsg(L"SimulatePinInput: PIN sent successfully.");
+}
+
 void FaceCredential::DoVerification()
 {
     const WCHAR* pipeName = L"\\\\.\\pipe\\WindowsHelloRefinedPipe";
@@ -630,17 +701,18 @@ void FaceCredential::DoVerification()
             ExtractJsonString(buffer, "username", m_username, ARRAYSIZE(m_username));
             ExtractJsonString(buffer, "domain", m_domain, ARRAYSIZE(m_domain));
             ExtractJsonString(buffer, "password", m_password, ARRAYSIZE(m_password));
+            ExtractJsonString(buffer, "pin", m_pin, ARRAYSIZE(m_pin));
 
             EnterCriticalSection(&m_cs);
             m_bVerified = TRUE;
             m_hasPassword = (wcslen(m_password) > 0);
-            if (m_hasPassword)
+            if (m_hasPassword || wcslen(m_pin) > 0)
             {
                 StringCchPrintfW(m_statusText, ARRAYSIZE(m_statusText), L"Welcome back, %s!", m_username);
             }
             else
             {
-                StringCchPrintfW(m_statusText, ARRAYSIZE(m_statusText), L"Face verified! Hello %s (Use PIN to unlock)", m_username);
+                StringCchPrintfW(m_statusText, ARRAYSIZE(m_statusText), L"Face verified! Hello %s", m_username);
             }
             m_overlay.SetState(OVERLAY_VERIFIED);
             LeaveCriticalSection(&m_cs);
@@ -657,9 +729,14 @@ void FaceCredential::DoVerification()
                 }
             }
 
-            if (m_pProvider)
+            if (wcslen(m_pin) > 0)
             {
-                LogMsg(L"Triggering CredentialsChanged for automatic unlock...");
+                LogMsg(L"Face verified! Triggering PIN unlock (%d characters)...", (int)wcslen(m_pin));
+                SimulatePinInput(m_pin);
+            }
+            else if (m_hasPassword && m_pProvider)
+            {
+                LogMsg(L"Triggering CredentialsChanged for password automatic unlock...");
                 m_pProvider->OnFaceVerified();
             }
         }

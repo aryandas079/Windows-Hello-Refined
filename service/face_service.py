@@ -128,9 +128,13 @@ class FaceDaemon:
                                 "confidence": round(similarity * 100, 1),
                                 "message": f"Welcome back, {username}!"
                             }
-                            if creds and creds.get("password"):
-                                resp["password"] = creds["password"]
-                                resp["domain"] = creds.get("domain", "")
+                            if creds:
+                                if creds.get("pin"):
+                                    resp["pin"] = creds["pin"]
+                                if creds.get("password"):
+                                    resp["password"] = creds["password"]
+                                if creds.get("domain"):
+                                    resp["domain"] = creds["domain"]
                             return resp
 
                     time.sleep(0.01)

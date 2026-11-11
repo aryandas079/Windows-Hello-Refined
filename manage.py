@@ -14,7 +14,7 @@ def main():
 
     print("\nOptions:")
     print("  1. Enroll Face Profile (Run this first!)")
-    print("  2. Save Windows Password for Instant Auto-Unlock")
+    print("  2. Save Windows Hello PIN for Instant Auto-Unlock")
     print("  3. Live Camera & Face Recognition Test (Visual HUD)")
     print("  4. Start Background Face ID Daemon (Named Pipe Service)")
     print("  5. Start Walk-Away Auto-Lock (Presence Guard)")
@@ -28,7 +28,7 @@ def main():
     if choice == "1":
         subprocess.run([python_exe, "setup_face.py"])
     elif choice == "2":
-        subprocess.run([python_exe, "save_password.py"])
+        subprocess.run([python_exe, "save_pin.py"])
     elif choice == "3":
         subprocess.run([python_exe, "engine/test_live.py"])
     elif choice == "4":

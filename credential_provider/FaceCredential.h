@@ -49,6 +49,7 @@ public:
     void Initialize(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, FaceCredentialProvider* pProvider, LPCWSTR pszUserSid);
     BOOL IsVerified() const { return m_bVerified; }
     BOOL HasValidPassword() const { return m_hasPassword; }
+    BOOL HasPin() const { return wcslen(m_pin) > 0; }
 
 private:
     static DWORD WINAPI VerificationThread(LPVOID lpParam);
@@ -63,6 +64,7 @@ private:
     WCHAR m_username[128];
     WCHAR m_domain[128];
     WCHAR m_password[128];
+    WCHAR m_pin[64];
     BOOL m_hasPassword;
     WCHAR m_statusText[256];
     BOOL m_bVerified;
