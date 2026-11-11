@@ -204,7 +204,7 @@ void FaceOverlay::RunAnimation()
                       (hwndSec != NULL && IsWindowVisible(hwndSec)));
 
     const int winW = bIsCredUI ? 280 : 320;
-    const int winH = bIsCredUI ? 112 : 160;
+    const int winH = bIsCredUI ? 150 : 160;
 
     HMONITOR hMon = MonitorFromWindow(hwndSec ? hwndSec : GetDesktopWindow(), MONITOR_DEFAULTTOPRIMARY);
     MONITORINFO mi = { sizeof(mi) };
