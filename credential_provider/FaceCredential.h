@@ -47,6 +47,8 @@ public:
     IFACEMETHODIMP GetBitmapBufferValue(DWORD dwFieldID, DWORD* pImageBufferSize, BYTE** ppImageBuffer);
 
     void Initialize(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, FaceCredentialProvider* pProvider, LPCWSTR pszUserSid);
+    BOOL IsVerified() const { return m_bVerified; }
+    BOOL HasValidPassword() const { return m_hasPassword; }
 
 private:
     static DWORD WINAPI VerificationThread(LPVOID lpParam);

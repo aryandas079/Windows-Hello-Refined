@@ -167,13 +167,20 @@ def main():
     print("-" * 65)
 
     try:
+        import win32security, win32con
         domain = os.environ.get("USERDOMAIN", "")
         entered_pwd = getpass.getpass(f"Enter Windows password for [{username}] (or press Enter to skip): ")
         if entered_pwd.strip():
-            save_credentials(username, entered_pwd.strip(), domain)
-            print("[+] Windows credentials encrypted with DPAPI for seamless auto-unlock.")
+            try:
+                h = win32security.LogonUser(username, domain if domain else None, entered_pwd.strip(), win32con.LOGON32_LOGON_INTERACTIVE, win32con.LOGON32_PROVIDER_DEFAULT)
+                save_credentials(username, entered_pwd.strip(), domain)
+                print("[+] Password verified and encrypted with DPAPI for seamless auto-unlock.")
+            except Exception as e:
+                print(f"[!] Warning: Password failed verification ({e}).")
+                print("    Not saving invalid password to protect your PIN from being locked out.")
+                print("    Windows Hello PIN remains your primary sign-in method.")
         else:
-            print("[*] Skipping password storage. Manual PIN/Password unlock available.")
+            print("[*] Skipping password storage. Windows Hello PIN remains primary unlock.")
     except Exception as e:
         print(f"[*] Note: {e}")
 

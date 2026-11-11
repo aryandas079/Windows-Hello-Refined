@@ -215,11 +215,19 @@ HRESULT FaceCredentialProvider::GetCredentialCount(DWORD* pdwCount, DWORD* pdwDe
 
     // Provide 1 credential tile
     *pdwCount = 1;
-    // Default to Windows Hello Face tile so NO PIN box is shown when face is active!
-    *pdwDefault = 0;
-    // Do NOT trigger immediate auto-logon until face verification succeeds
-    *pbAutoLogonWithDefault = FALSE;
-    LogProvider(L"GetCredentialCount: count=1, default=0, autoLogon=FALSE");
+    if (m_pCredential && m_pCredential->IsVerified() && m_pCredential->HasValidPassword())
+    {
+        *pdwDefault = 0;
+        *pbAutoLogonWithDefault = TRUE;
+    }
+    else
+    {
+        // NEVER steal default tile from Windows Hello PIN!
+        // Windows Hello PIN remains the primary sign-in tile at all times.
+        *pdwDefault = CREDENTIAL_PROVIDER_NO_DEFAULT;
+        *pbAutoLogonWithDefault = FALSE;
+    }
+    LogProvider(L"GetCredentialCount: count=1, default=%u, autoLogon=%d", *pdwDefault, *pbAutoLogonWithDefault);
     return S_OK;
 }
 

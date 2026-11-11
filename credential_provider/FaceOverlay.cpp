@@ -108,6 +108,13 @@ DWORD WINAPI FaceOverlay::AnimationThread(LPVOID lpParam)
 
 void FaceOverlay::RunAnimation()
 {
+    HDESK hInputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
+    if (hInputDesk)
+    {
+        SetThreadDesktop(hInputDesk);
+        CloseDesktop(hInputDesk);
+    }
+
     // Register window class
     const WCHAR* className = L"WindowsHelloNativeOverlay";
     WNDCLASSEXW wc = {0};
@@ -139,6 +146,7 @@ void FaceOverlay::RunAnimation()
         return;
     }
 
+    SetWindowPos(m_hwnd, HWND_TOPMOST, posX, posY, winW, winH, SWP_SHOWWINDOW | SWP_NOACTIVATE);
     ShowWindow(m_hwnd, SW_SHOWNOACTIVATE);
 
     // Create 32-bit ARGB DIB Section for per-pixel alpha blending

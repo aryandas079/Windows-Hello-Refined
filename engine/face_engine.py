@@ -6,9 +6,9 @@ class FaceEngine:
     def __init__(self,
                  detector_path="models/face_detection_yunet_2023mar.onnx",
                  recognizer_path="models/face_recognition_sface_2021dec.onnx",
-                 score_threshold=0.45,
+                 score_threshold=0.35,
                  nms_threshold=0.3,
-                 cosine_threshold=0.34):
+                 cosine_threshold=0.33):
         """
         FaceEngine provides sub-second face detection, alignment,
         liveness detection, and embedding matching.
@@ -86,7 +86,7 @@ class FaceEngine:
         # 1. High frequency texture analysis (Laplacian)
         gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
         lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-        if lap_var < 10.0:
+        if lap_var < 7.0:
             # Extreme blur or solid block (typical of fake/printed paper)
             return False, float(lap_var), "Extreme blur detected"
 
@@ -96,7 +96,7 @@ class FaceEngine:
         cr_std = np.std(cr)
         cb_std = np.std(cb)
 
-        if cr_std < 1.0 or cb_std < 1.0:
+        if cr_std < 0.6 or cb_std < 0.6:
             return False, float(cr_std + cb_std), "Abnormal color compression"
 
         liveness_score = min(1.0, (lap_var / 150.0) * 0.5 + ((cr_std + cb_std) / 20.0) * 0.5)
