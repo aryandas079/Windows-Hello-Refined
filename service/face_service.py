@@ -76,9 +76,10 @@ class FaceDaemon:
             self.camera = None
             log_service("Camera hardware released (LED off).")
 
-    def verify_current_face(self, timeout_sec=4.0):
+    def verify_current_face(self, timeout_sec=3.5):
         """
         Runs face recognition for up to timeout_sec seconds.
+        Fast 3.5s timeout matching genuine Windows Hello behavior.
         GUARANTEES camera is opened only during verification and released immediately after.
         """
         if not self.profile:
@@ -162,7 +163,7 @@ class FaceDaemon:
                 }
             elif cmd_str == "VERIFY":
                 log_service("Lock screen requested face verification...")
-                response = self.verify_current_face(timeout_sec=4.0)
+                response = self.verify_current_face(timeout_sec=3.5)
                 log_service(f"Verification outcome: status={response.get('status')}")
             else:
                 response = {"status": "unknown_command"}

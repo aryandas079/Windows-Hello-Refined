@@ -702,26 +702,25 @@ static void SimulatePinInput(LPCWSTR pszPin)
 
 static void RevealPinInterface()
 {
-    LogMsg(L"RevealPinInterface: sliding up lock curtain to reveal PIN prompt...");
+    LogMsg(L"RevealPinInterface: sliding up lock curtain to reveal Windows Hello PIN section...");
     HDESK hInputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
     if (hInputDesk)
     {
         SetThreadDesktop(hInputDesk);
+        LogMsg(L"RevealPinInterface: attached to input desktop.");
     }
 
-    // Send Spacebar + Extended Up to slide up the lock curtain and reveal the default PIN interface
+    // Wake and slide up the lock screen curtain to reveal the PIN section
     SendKey(VK_SPACE);
     SendKey(VK_UP, true);
 
-    // Fast 220ms transition buffer for lock curtain to reveal PIN box
-    Sleep(220);
-
-    // Clear wake-up space so PIN box is completely empty, clean and ready for user input
+    // Fast 150ms buffer, then clear the wake-up space character so the PIN box is clean and focused
+    Sleep(150);
     for (int b = 0; b < 6; b++)
     {
         SendKey(VK_BACK);
     }
-    LogMsg(L"RevealPinInterface: lock curtain dismissed, PIN interface focused.");
+    LogMsg(L"RevealPinInterface: Windows Hello PIN interface revealed and ready for user input.");
 }
 
 static void EnsureDaemonRunning()
@@ -845,6 +844,7 @@ void FaceCredential::DoVerification()
         {
             m_pEvents->SetFieldString(this, FPF_STATUS_TEXT, m_statusText);
         }
+        Sleep(350);
         RevealPinInterface();
         return;
     }
@@ -908,7 +908,7 @@ void FaceCredential::DoVerification()
         }
         else
         {
-            LogMsg(L"Face verification failed or timed out.");
+            LogMsg(L"Face verification failed or timed out. Opening Windows Hello PIN section...");
             EnterCriticalSection(&m_cs);
             StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Couldn't recognize face. Enter your PIN.");
             m_overlay.SetState(OVERLAY_FAILED, L"Couldn't recognize face. Enter your PIN.");
@@ -918,14 +918,14 @@ void FaceCredential::DoVerification()
                 m_pEvents->SetFieldString(this, FPF_STATUS_TEXT, m_statusText);
             }
 
-            // Verification failed: automatically slide up curtain and reveal the Windows Hello PIN section
+            // Show failed status briefly, then automatically slide up to the Windows Hello PIN section
+            Sleep(350);
             RevealPinInterface();
         }
     }
     else
     {
         LogMsg(L"ReadFile from pipe failed: %d", GetLastError());
-        RevealPinInterface();
     }
 
     CloseHandle(hPipe);
