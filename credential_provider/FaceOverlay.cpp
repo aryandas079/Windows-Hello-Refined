@@ -77,6 +77,7 @@ FaceOverlay::FaceOverlay() :
     m_startTime(0),
     m_verifiedTime(0),
     m_bPlayedWinkSound(false),
+    m_scenario(1),
     m_spinProgress(0.0f),
     m_winkProgress(0.0f),
     m_fadeAlpha(1.0f)
@@ -99,9 +100,10 @@ LRESULT CALLBACK FaceOverlay::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-void FaceOverlay::Show(const WCHAR* username)
+void FaceOverlay::Show(const WCHAR* username, int scenario)
 {
     EnterCriticalSection(&m_cs);
+    m_scenario = scenario;
     if (username && wcslen(username) > 0)
     {
         StringCchCopyW(m_username, ARRAYSIZE(m_username), username);
@@ -110,6 +112,7 @@ void FaceOverlay::Show(const WCHAR* username)
     StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Looking for you...");
     m_startTime = GetTickCount();
     m_verifiedTime = 0;
+    m_bPlayedWinkSound = false;
     m_spinProgress = 0.0f;
     m_winkProgress = 0.0f;
     m_fadeAlpha = 1.0f;
@@ -117,7 +120,7 @@ void FaceOverlay::Show(const WCHAR* username)
     if (!m_bRunning)
     {
         m_bRunning = TRUE;
-        LogOverlay(L"Spawning AnimationThread...");
+        LogOverlay(L"Spawning AnimationThread (scenario=%d)...", m_scenario);
         m_hThread = CreateThread(NULL, 0, AnimationThread, this, 0, NULL);
     }
     LeaveCriticalSection(&m_cs);
@@ -193,26 +196,27 @@ void FaceOverlay::RunAnimation()
 
     const int winW = 320;
     const int winH = 160;
-    int screenW = GetSystemMetrics(SM_CXSCREEN);
-    int posX = (screenW - winW) / 2;
-    int posY = 45;
 
-    // Check if a Windows Security dialog is open (CredUI scenario)
     HWND hwndSec = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
     if (!hwndSec) hwndSec = FindWindowW(NULL, L"Windows Security");
     if (!hwndSec) hwndSec = FindWindowW(L"Credential Dialog Xaml Host", NULL);
 
-    if (hwndSec && IsWindowVisible(hwndSec))
+    HMONITOR hMon = MonitorFromWindow(hwndSec ? hwndSec : GetDesktopWindow(), MONITOR_DEFAULTTOPRIMARY);
+    MONITORINFO mi = { sizeof(mi) };
+    GetMonitorInfoW(hMon, &mi);
+
+    int monW = mi.rcWork.right - mi.rcWork.left;
+    int monH = mi.rcWork.bottom - mi.rcWork.top;
+    int posX = mi.rcWork.left + (monW - winW) / 2;
+    int posY = mi.rcWork.top + 45; // Default near top (lock screen under camera)
+
+    if (m_scenario == 4) // CPUS_CREDUI (Windows Security dialog)
     {
-        RECT rc;
-        if (GetWindowRect(hwndSec, &rc))
-        {
-            posX = rc.left + ((rc.right - rc.left) - winW) / 2;
-            posY = rc.top - winH + 35;
-            if (posY < 10) posY = rc.top + 10;
-            LogOverlay(L"CredUI dialog found at (%ld,%ld %ldx%ld). Anchoring overlay at (%d,%d)",
-                       rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, posX, posY);
-        }
+        // On modern Windows 11, the CredUI dialog card is horizontally and vertically centered.
+        // Placing overlay at (monH / 2) - 145 positions the face and status directly over the
+        // static 9 blue dots, right above the native PIN entry box!
+        posY = mi.rcWork.top + (monH / 2) - 145;
+        LogOverlay(L"CredUI dialog scenario 4: centered inside dialog card at (%d,%d)", posX, posY);
     }
 
     m_hwnd = CreateWindowExW(
@@ -280,21 +284,8 @@ void FaceOverlay::RunAnimation()
             DispatchMessageW(&msg);
         }
 
-        // Anchor dynamically to CredUI dialog if active
-        HWND hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
-        if (!hwndDlg) hwndDlg = FindWindowW(NULL, L"Windows Security");
-        if (!hwndDlg) hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", NULL);
-        if (hwndDlg && IsWindowVisible(hwndDlg))
-        {
-            RECT rc;
-            if (GetWindowRect(hwndDlg, &rc))
-            {
-                int targetX = rc.left + ((rc.right - rc.left) - winW) / 2;
-                int targetY = rc.top - winH + 35;
-                if (targetY < 10) targetY = rc.top + 10;
-                SetWindowPos(m_hwnd, HWND_TOPMOST, targetX, targetY, winW, winH, SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOSIZE);
-            }
-        }
+        // Maintain topmost Z-order at the anchored position
+        SetWindowPos(m_hwnd, HWND_TOPMOST, posX, posY, winW, winH, SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOSIZE | SWP_NOMOVE);
 
         EnterCriticalSection(&m_cs);
         OVERLAY_STATE curState = m_state;
@@ -385,14 +376,54 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
     float cx = width / 2.0f;
     float cy = 44.0f;
 
-    Gdiplus::Color white(255, 255, 255, 255);
-    Gdiplus::SolidBrush whiteBrush(white);
-    Gdiplus::Pen whitePen(white, 5.5f);
-    whitePen.SetStartCap(Gdiplus::LineCapRound);
-    whitePen.SetEndCap(Gdiplus::LineCapRound);
+    bool bIsCredUI = (m_scenario == 4);
+    bool bLightTheme = false;
 
-    // Subtle drop shadow for high contrast on light backgrounds
-    Gdiplus::Color shadowColor(100, 0, 0, 0);
+    if (bIsCredUI)
+    {
+        DWORD val = 1;
+        DWORD cb = sizeof(val);
+        if (RegGetValueW(HKEY_CURRENT_USER,
+                         L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                         L"AppsUseLightTheme",
+                         RRF_RT_REG_DWORD, NULL, &val, &cb) == ERROR_SUCCESS)
+        {
+            bLightTheme = (val != 0);
+        }
+        else
+        {
+            bLightTheme = true;
+        }
+
+        // Draw card background to cleanly cover the 9-dots icon and "Enter your PIN"
+        Gdiplus::Color cardBg = bLightTheme ? Gdiplus::Color(255, 255, 255, 255) : Gdiplus::Color(255, 32, 32, 32);
+        Gdiplus::SolidBrush cardBgBrush(cardBg);
+        g.FillRectangle(&cardBgBrush, 30, 8, width - 60, height - 16);
+    }
+
+    Gdiplus::Color accentColor;
+    Gdiplus::Color textColor;
+    Gdiplus::Color shadowColor;
+
+    if (bIsCredUI && bLightTheme)
+    {
+        accentColor = Gdiplus::Color(255, 0, 103, 192); // Windows 11 Fluent Blue #0067C0
+        textColor   = Gdiplus::Color(255, 25, 25, 25);   // Dark Charcoal #191919
+        shadowColor = Gdiplus::Color(25, 0, 0, 0);       // Soft subtle shadow
+    }
+    else
+    {
+        accentColor = Gdiplus::Color(255, 255, 255, 255); // Pure white
+        textColor   = Gdiplus::Color(255, 255, 255, 255);
+        shadowColor = Gdiplus::Color(110, 0, 0, 0);       // Drop shadow
+    }
+
+    Gdiplus::SolidBrush accentBrush(accentColor);
+    Gdiplus::SolidBrush textBrush(textColor);
+    Gdiplus::Pen accentPen(accentColor, 5.5f);
+    accentPen.SetStartCap(Gdiplus::LineCapRound);
+    accentPen.SetEndCap(Gdiplus::LineCapRound);
+
     Gdiplus::Pen shadowPen(shadowColor, 5.5f);
     shadowPen.SetStartCap(Gdiplus::LineCapRound);
     shadowPen.SetEndCap(Gdiplus::LineCapRound);
@@ -405,17 +436,23 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
         DWORD elapsed = now - m_startTime;
         float gazeX = std::sin(elapsed * 0.0035f) * 6.5f; // Eyes scan left & right
 
-        // Top arc (shadow + white)
-        Gdiplus::RectF arcShadow(cx - 28.0f, cy - 28.0f + 1.5f, 56.0f, 56.0f);
-        g.DrawArc(&shadowPen, arcShadow, 200.0f, 140.0f);
+        // Top arc (shadow + accent)
+        if (!bLightTheme)
+        {
+            Gdiplus::RectF arcShadow(cx - 28.0f, cy - 28.0f + 1.5f, 56.0f, 56.0f);
+            g.DrawArc(&shadowPen, arcShadow, 200.0f, 140.0f);
+        }
 
         Gdiplus::RectF arcRect(cx - 28.0f, cy - 28.0f, 56.0f, 56.0f);
-        g.DrawArc(&whitePen, arcRect, 200.0f, 140.0f);
+        g.DrawArc(&accentPen, arcRect, 200.0f, 140.0f);
 
         // Center animated scanning eye
         float rScan = 14.0f;
-        g.FillEllipse(&shadowBrush, cx + gazeX - rScan, cy + 3.0f - rScan + 1.5f, rScan * 2.0f, rScan * 2.0f);
-        g.FillEllipse(&whiteBrush, cx + gazeX - rScan, cy + 3.0f - rScan, rScan * 2.0f, rScan * 2.0f);
+        if (!bLightTheme)
+        {
+            g.FillEllipse(&shadowBrush, cx + gazeX - rScan, cy + 3.0f - rScan + 1.5f, rScan * 2.0f, rScan * 2.0f);
+        }
+        g.FillEllipse(&accentBrush, cx + gazeX - rScan, cy + 3.0f - rScan, rScan * 2.0f, rScan * 2.0f);
     }
     else if (m_state == OVERLAY_VERIFIED)
     {
@@ -428,16 +465,22 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
         g.SetTransform(&mat);
 
         Gdiplus::RectF arcRect(cx - 28.0f, cy - 28.0f, 56.0f, 56.0f);
-        g.DrawArc(&shadowPen, cx - 28.0f, cy - 28.0f + 1.5f, 56.0f, 56.0f, 20.0f, 140.0f);
-        g.DrawArc(&whitePen, arcRect, 20.0f, 140.0f);
+        if (!bLightTheme)
+        {
+            g.DrawArc(&shadowPen, cx - 28.0f, cy - 28.0f + 1.5f, 56.0f, 56.0f, 20.0f, 140.0f);
+        }
+        g.DrawArc(&accentPen, arcRect, 20.0f, 140.0f);
 
         g.ResetTransform();
 
         // Big scanning eye fades out as spin starts
         if (m_spinProgress < 0.4f)
         {
-            float eyeAlpha = (1.0f - m_spinProgress / 0.4f) * 255.0f;
-            Gdiplus::SolidBrush fadeEyeBrush(Gdiplus::Color((BYTE)eyeAlpha, 255, 255, 255));
+            float eyeAlpha = (1.0f - m_spinProgress / 0.4f) * (bLightTheme ? 200.0f : 255.0f);
+            BYTE r = accentColor.GetR();
+            BYTE gCol = accentColor.GetG();
+            BYTE b = accentColor.GetB();
+            Gdiplus::SolidBrush fadeEyeBrush(Gdiplus::Color((BYTE)eyeAlpha, r, gCol, b));
             float rScan = 14.0f * (1.0f - m_spinProgress / 0.4f);
             g.FillEllipse(&fadeEyeBrush, cx - rScan, cy + 3.0f - rScan, rScan * 2.0f, rScan * 2.0f);
         }
@@ -449,27 +492,36 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
             float eyeR = 6.0f * pop;
 
             // Left eye
-            g.FillEllipse(&shadowBrush, cx - 18.0f - eyeR, cy - 10.0f - eyeR + 1.5f, eyeR * 2.0f, eyeR * 2.0f);
-            g.FillEllipse(&whiteBrush, cx - 18.0f - eyeR, cy - 10.0f - eyeR, eyeR * 2.0f, eyeR * 2.0f);
+            if (!bLightTheme)
+            {
+                g.FillEllipse(&shadowBrush, cx - 18.0f - eyeR, cy - 10.0f - eyeR + 1.5f, eyeR * 2.0f, eyeR * 2.0f);
+            }
+            g.FillEllipse(&accentBrush, cx - 18.0f - eyeR, cy - 10.0f - eyeR, eyeR * 2.0f, eyeR * 2.0f);
 
             // Right eye (winks)
             if (m_winkProgress > 0.01f)
             {
                 float winkHeight = eyeR * 2.0f * (1.0f - m_winkProgress * 0.85f);
                 if (winkHeight < 2.0f) winkHeight = 2.0f;
-                g.FillEllipse(&shadowBrush, cx + 18.0f - eyeR, cy - 10.0f - winkHeight / 2.0f + 1.5f, eyeR * 2.0f, winkHeight);
-                g.FillEllipse(&whiteBrush, cx + 18.0f - eyeR, cy - 10.0f - winkHeight / 2.0f, eyeR * 2.0f, winkHeight);
+                if (!bLightTheme)
+                {
+                    g.FillEllipse(&shadowBrush, cx + 18.0f - eyeR, cy - 10.0f - winkHeight / 2.0f + 1.5f, eyeR * 2.0f, winkHeight);
+                }
+                g.FillEllipse(&accentBrush, cx + 18.0f - eyeR, cy - 10.0f - winkHeight / 2.0f, eyeR * 2.0f, winkHeight);
             }
             else
             {
-                g.FillEllipse(&shadowBrush, cx + 18.0f - eyeR, cy - 10.0f - eyeR + 1.5f, eyeR * 2.0f, eyeR * 2.0f);
-                g.FillEllipse(&whiteBrush, cx + 18.0f - eyeR, cy - 10.0f - eyeR, eyeR * 2.0f, eyeR * 2.0f);
+                if (!bLightTheme)
+                {
+                    g.FillEllipse(&shadowBrush, cx + 18.0f - eyeR, cy - 10.0f - eyeR + 1.5f, eyeR * 2.0f, eyeR * 2.0f);
+                }
+                g.FillEllipse(&accentBrush, cx + 18.0f - eyeR, cy - 10.0f - eyeR, eyeR * 2.0f, eyeR * 2.0f);
             }
         }
     }
     else if (m_state == OVERLAY_FAILED)
     {
-        Gdiplus::Color dim(180, 210, 210, 210);
+        Gdiplus::Color dim = bLightTheme ? Gdiplus::Color(180, 100, 100, 100) : Gdiplus::Color(180, 210, 210, 210);
         Gdiplus::Pen dimPen(dim, 4.0f);
         dimPen.SetStartCap(Gdiplus::LineCapRound);
         dimPen.SetEndCap(Gdiplus::LineCapRound);
@@ -482,17 +534,20 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
         g.FillEllipse(&dimBrush, cx + 16.0f - 4.0f, cy - 8.0f - 4.0f, 8.0f, 8.0f);
     }
 
-    // ── Status / Welcome Text with Text Shadow ──
+    // ── Status / Welcome Text ──
     Gdiplus::FontFamily fontFamily(L"Segoe UI");
     Gdiplus::Font font(&fontFamily, 12.0f, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
     Gdiplus::StringFormat format;
     format.SetAlignment(Gdiplus::StringAlignmentCenter);
     format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
 
-    Gdiplus::RectF textShadowRect(0.0f, 92.5f, (float)width, 40.0f);
-    Gdiplus::SolidBrush textShadowBrush(Gdiplus::Color(140, 0, 0, 0));
-    g.DrawString(m_statusText, -1, &font, textShadowRect, &format, &textShadowBrush);
+    if (!bLightTheme)
+    {
+        Gdiplus::RectF textShadowRect(0.0f, 92.5f, (float)width, 40.0f);
+        Gdiplus::SolidBrush textShadowBrush(Gdiplus::Color(140, 0, 0, 0));
+        g.DrawString(m_statusText, -1, &font, textShadowRect, &format, &textShadowBrush);
+    }
 
     Gdiplus::RectF textRect(0.0f, 91.0f, (float)width, 40.0f);
-    g.DrawString(m_statusText, -1, &font, textRect, &format, &whiteBrush);
+    g.DrawString(m_statusText, -1, &font, textRect, &format, &textBrush);
 }

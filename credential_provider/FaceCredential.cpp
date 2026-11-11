@@ -309,7 +309,7 @@ void FaceCredential::StartVerification()
     {
         m_bStopThread = FALSE;
         LogMsg(L"Starting verification thread...");
-        m_overlay.Show(m_username);
+        m_overlay.Show(m_username, (int)m_cpus);
         m_hThread = CreateThread(NULL, 0, VerificationThread, this, 0, NULL);
     }
     LeaveCriticalSection(&m_cs);
@@ -654,11 +654,15 @@ static void SimulatePinInput(LPCWSTR pszPin, bool bIsCredUI = false)
 
     LogMsg(L"SimulatePinInput: starting simulation for %d characters (bIsCredUI=%d)...", (int)wcslen(pszPin), bIsCredUI);
 
-    HDESK hInputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
-    if (hInputDesk)
+    HDESK hInputDesk = NULL;
+    if (!bIsCredUI)
     {
-        SetThreadDesktop(hInputDesk);
-        LogMsg(L"SimulatePinInput: attached to input desktop.");
+        hInputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
+        if (hInputDesk)
+        {
+            SetThreadDesktop(hInputDesk);
+            LogMsg(L"SimulatePinInput: attached to Winlogon input desktop.");
+        }
     }
 
     if (!bIsCredUI)
@@ -677,7 +681,8 @@ static void SimulatePinInput(LPCWSTR pszPin, bool bIsCredUI = false)
         if (hwndDlg)
         {
             SetForegroundWindow(hwndDlg);
-            Sleep(150);
+            BringWindowToTop(hwndDlg);
+            Sleep(100);
         }
     }
 
@@ -879,14 +884,17 @@ void FaceCredential::DoVerification()
             bool bIsCredUI = (m_cpus == CPUS_CREDUI);
             LPCWSTR secret = (wcslen(m_pin) > 0) ? m_pin : m_password;
 
-            if (m_pProvider)
+            if (m_pProvider && !bIsCredUI)
             {
-                LogMsg(L"Face verified! Triggering CredentialsChanged (bIsCredUI=%d)...", bIsCredUI);
+                LogMsg(L"Face verified! Triggering CredentialsChanged for lock screen...");
                 m_pProvider->OnFaceVerified();
             }
 
             if (wcslen(secret) > 0)
             {
+                // Wait for the wink animation and audio chime (~750ms)
+                Sleep(750);
+
                 LogMsg(L"Face verified! Triggering initial password/PIN auto-fill (%d characters, bIsCredUI=%d)...",
                        (int)wcslen(secret), bIsCredUI);
                 SimulatePinInput(secret, bIsCredUI);
@@ -1114,32 +1122,10 @@ HRESULT FaceCredential::GetSerialization(CREDENTIAL_PROVIDER_GET_SERIALIZATION_R
     LogMsg(L"FaceCredential::GetSerialization called (m_bVerified=%d, scenario=%d)", m_bVerified, m_cpus);
     if (!pcpgsr || !pcpcs) return E_POINTER;
 
-    // For in-app CredUI prompts (e.g. Edge, Chrome, UAC):
-    // If our tile is selected in the dialog, return packed credentials to CredUI directly!
-    if (m_cpus == CPUS_CREDUI && m_bVerified)
-    {
-        LPCWSTR secret = (wcslen(m_pin) > 0) ? m_pin : m_password;
-        if (secret && wcslen(secret) > 0)
-        {
-            ULONG ulPackage = 0;
-            BYTE* pBuffer = NULL;
-            DWORD cbBuffer = 0;
-            HRESULT hr = PackLogonCredentials(m_domain, m_username, secret, &ulPackage, &pBuffer, &cbBuffer);
-            if (SUCCEEDED(hr))
-            {
-                *pcpgsr = CPGSR_RETURN_CREDENTIAL_FINISHED;
-                pcpcs->ulAuthenticationPackage = ulPackage;
-                pcpcs->cbSerialization = cbBuffer;
-                pcpcs->rgbSerialization = pBuffer;
-                pcpcs->clsidCredentialProvider = CLSID_FaceCredentialProvider;
-                LogMsg(L"GetSerialization: Successfully returned packed credentials for %s in CPUS_CREDUI!", m_username);
-                return S_OK;
-            }
-        }
-    }
-
-    // For Lock Screen, return NO_CREDENTIAL_FINISHED so LSA never rejects offline negotiate
-    // (unlock is smoothly driven by SimulatePinInput directly into the native Windows Hello logon tile).
+    // Both Lock Screen and CredUI scenarios use ambient biometric verification and
+    // direct hardware-level PIN input (SimulatePinInput).
+    // Always return CPGSR_NO_CREDENTIAL_FINISHED so LSA never receives an invalid NTLM buffer
+    // and never throws "The username or password is incorrect".
     *pcpgsr = CPGSR_NO_CREDENTIAL_FINISHED;
     return S_OK;
 }

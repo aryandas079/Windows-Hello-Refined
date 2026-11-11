@@ -17,7 +17,7 @@ public:
     FaceOverlay();
     ~FaceOverlay();
 
-    void Show(const WCHAR* username = L"Aryan");
+    void Show(const WCHAR* username = L"Aryan", int scenario = 1);
     void SetState(OVERLAY_STATE state, const WCHAR* customText = nullptr);
     void Hide();
 
@@ -32,6 +32,7 @@ private:
     HANDLE m_hThread;
     BOOL m_bRunning;
     OVERLAY_STATE m_state;
+    int m_scenario;
     WCHAR m_username[128];
     WCHAR m_statusText[256];
     CRITICAL_SECTION m_cs;
