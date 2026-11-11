@@ -129,10 +129,10 @@ class FaceDaemon:
                         log_service(f"Frame {frames_tested}: live={is_live} ({live_msg}, score={lscore:.2f}), match={is_match} (sim={similarity:.3f}, cons={consecutive_verified})")
 
                         # Verified genuine match: requires both biometric match AND anti-spoof liveness
-                        # across at least 3 consecutive frames to eliminate any single-frame glitch bypass!
+                        # across at least 2 consecutive frames to eliminate single-frame glitch bypass!
                         if is_match and is_live:
                             consecutive_verified += 1
-                            if consecutive_verified >= 3:
+                            if consecutive_verified >= 2:
                                 log_service(f"Match verified across {consecutive_verified} consecutive frames! User: {username}, Similarity: {similarity:.2f}, Liveness: {lscore:.2f}")
                                 creds = load_credentials()
                                 resp = {

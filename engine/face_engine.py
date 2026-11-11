@@ -381,48 +381,35 @@ class FaceEngine:
             self._spoof_cooldown -= 1
             return False, 0.05, "Digital screen / phone spoof cooldown active (spoof detected)"
 
-        # Layer 0: Screen bezel / mobile phone chassis detection
-        if self.check_screen_bezel(frame, face, enhanced=enhanced):
-            self._spoof_cooldown = 20
-            self.reset_blink_history()
-            return False, 0.05, "Digital screen / phone bezel detected (phone spoof)"
-
-        # Layer 1: Laplacian texture frequency & screen pixel raster bounds
+        # Physical screen check 1: Subpixel raster frequency (phone screens produce high laplacian)
         lap_var = float(cv2.Laplacian(gray_roi, cv2.CV_64F).var())
         if lap_var < 15.0:
             return False, 0.10, "Extreme blur or flat surface detected"
-        if lap_var > 420.0:
-            self._spoof_cooldown = 20
+        if lap_var > 850.0:
+            self._spoof_cooldown = 10
             self.reset_blink_history()
-            return False, 0.08, "Digital screen subpixel raster / moire detected (phone spoof)"
+            return False, 0.05, f"Digital screen subpixel raster detected (phone spoof)"
 
-        # Layer 2: 2D FFT periodic subpixel frequency check (detects OLED/LCD screen grids)
-        is_raster, r_ratio = self.check_screen_frequency(gray_roi)
-        if is_raster:
-            self._spoof_cooldown = 20
-            self.reset_blink_history()
-            return False, 0.08, "Display subpixel raster grid detected (screen spoof)"
-
-        # Layer 3: YCrCb color chrominance distribution & display gamut
+        # Physical screen check 2: YCrCb color saturation (phone OLED/LCD emits saturated subpixels)
         ycrcb = cv2.cvtColor(face_roi, cv2.COLOR_BGR2YCrCb)
         _, cr, cb = cv2.split(ycrcb)
         cr_std = float(np.std(cr))
         cb_std = float(np.std(cb))
         if cr_std < 0.8 or cb_std < 0.8:
             return False, 0.10, "Abnormal color compression (monochrome or cheap print)"
-        if cr_std > 26.0 or cb_std > 21.0:
-            self._spoof_cooldown = 20
+        if cr_std > 28.0 or cb_std > 22.0:
+            self._spoof_cooldown = 10
             self.reset_blink_history()
-            return False, 0.08, "Unnatural digital screen saturation / display gamut detected (phone spoof)"
+            return False, 0.05, "Unnatural digital screen saturation detected (phone spoof)"
 
-        # Layer 4: Specular highlight on screen glass (flat glass mirror reflection)
+        # Physical screen check 3: Specular glass reflection (phone tempered glass mirror glare)
         specular_count = int(np.sum(gray_roi > 235))
-        if specular_count > 55:
-            self._spoof_cooldown = 20
+        if specular_count > 50:
+            self._spoof_cooldown = 10
             self.reset_blink_history()
-            return False, 0.08, "Flat screen glass reflection detected (phone spoof)"
+            return False, 0.05, "Flat screen glass reflection detected (phone spoof)"
 
-        # Layer 5: Biological hemoglobin spectral reflectance (B/R absorption ratio)
+        # Physical screen check 4: Biological hemoglobin spectral reflectance (B/R absorption ratio)
         h_roi, w_roi = face_roi.shape[:2]
         skin_sample = face_roi[int(h_roi * 0.30):int(h_roi * 0.75), int(w_roi * 0.25):int(w_roi * 0.75)]
         if skin_sample.size > 0:
@@ -430,15 +417,17 @@ class FaceEngine:
             b_val, g_val, r_val = float(mean_bgr[0]), float(mean_bgr[1]), float(mean_bgr[2])
             br_ratio = b_val / (r_val + 1e-6)
             if br_ratio > 0.93 and r_val > 65.0:
-                return False, 0.08, "Digital display backlight / blue emitter detected (phone spoof)"
+                self._spoof_cooldown = 10
+                self.reset_blink_history()
+                return False, 0.05, "Digital display backlight / blue emitter detected (phone spoof)"
 
-        # Layer 6: LBP micro-texture entropy
+        # Layer 5: LBP micro-texture entropy
         lbp_hist = _lbp_histogram(gray_roi)
         lbp_entropy = -float(np.sum(lbp_hist * np.log2(lbp_hist + 1e-10)))
         if lbp_entropy < 4.4:
             return False, lbp_entropy / 8.0, "LBP micro-texture too uniform (possible photo)"
 
-        # Layer 7: MediaPipe 478 3D landmark depth curvature
+        # Layer 6: MediaPipe 478 3D landmark depth curvature
         landmarks, blendshapes = self.get_face_landmarks_478(frame)
         if landmarks is None or len(landmarks) < 468:
             # Fallback to enhanced frame if room lighting is dim
@@ -453,7 +442,7 @@ class FaceEngine:
         if z_span < 0.08:
             return False, 0.15, "Lack of 3D facial depth (possible flat photo)"
 
-        # Layer 8: Multi-frame physiological micro-movement & ocular micro-saccades
+        # Layer 7: Multi-frame physiological micro-movement & ocular micro-saccades
         ear_l = _ear(landmarks, _LEFT_EYE_UPPER,  _LEFT_EYE_LOWER,  _LEFT_EYE_CORNERS)
         ear_r = _ear(landmarks, _RIGHT_EYE_UPPER, _RIGHT_EYE_LOWER, _RIGHT_EYE_CORNERS)
         ear_val = float((ear_l + ear_r) / 2.0)
@@ -483,7 +472,7 @@ class FaceEngine:
 
         # Evaluate temporal biological traits:
         if len(self._ear_values) < 3:
-            dynamic_score = 0.15
+            dynamic_score = 0.30
             dynamic_msg = "Analyzing physiological micro-movement..."
         else:
             ear_min, ear_max = min(self._ear_values), max(self._ear_values)
@@ -493,17 +482,17 @@ class FaceEngine:
             bs_span = (max(self._blendshape_history) - min(self._blendshape_history)) if self._blendshape_history else 0.0
             geom_std = float(np.std(self._geom_history)) if len(self._geom_history) >= 3 else 0.0
 
-            is_blink = (ear_span >= 0.060 and ear_min < 0.20 and ear_max > 0.24) or (bs_span >= 0.30)
-            is_ocular = (iris_span >= 0.0090)
-            is_tremor = (ear_span >= 0.0120 or ear_std >= 0.0040)
-            is_expression = (bs_span >= 0.030)
-            is_parallax = (geom_std >= 0.0050)
+            is_blink = (ear_span >= 0.050 and ear_min < 0.20 and ear_max > 0.24) or (bs_span >= 0.30)
+            is_ocular = (iris_span >= 0.0070)
+            is_tremor = (ear_span >= 0.0080 or ear_std >= 0.0030)
+            is_expression = (bs_span >= 0.020)
+            is_parallax = (geom_std >= 0.0040)
 
             if is_blink:
                 dynamic_score = 1.0
                 dynamic_msg = "Blink verified"
             elif is_ocular:
-                dynamic_score = 0.92
+                dynamic_score = 0.90
                 dynamic_msg = "Ocular micro-saccades verified"
             elif is_tremor:
                 dynamic_score = 0.88
@@ -515,31 +504,31 @@ class FaceEngine:
                 dynamic_score = 0.82
                 dynamic_msg = "3D parallax motion verified"
             else:
-                dynamic_score = 0.08
+                dynamic_score = 0.20
                 dynamic_msg = "No physiological micro-movement"
 
-            if len(self._ear_values) >= 6 and dynamic_score <= 0.15:
-                return False, 0.10, "Static photo / motionless face detected (spoof)"
+            if len(self._ear_values) >= 6 and dynamic_score <= 0.20:
+                return False, 0.15, "Static photo / motionless face detected (spoof)"
 
         # Texture and color component scores
         if lap_var <= 200.0:
             texture_score = min(1.0, max(0.0, (lap_var - 15.0) / 100.0))
         else:
-            texture_score = max(0.0, 1.0 - (lap_var - 200.0) / 220.0)
+            texture_score = max(0.0, 1.0 - (lap_var - 200.0) / 450.0)
 
         color_score = min(1.0, (cr_std + cb_std) / 22.0)
         lbp_score   = min(1.0, max(0.0, (lbp_entropy - 4.2) / 3.0))
         depth_score = min(1.0, max(0.0, (z_span - 0.08) / 0.15))
 
         liveness_score = (
-            texture_score * 0.15 +
-            color_score   * 0.15 +
-            lbp_score     * 0.15 +
+            texture_score * 0.20 +
+            color_score   * 0.20 +
+            lbp_score     * 0.20 +
             depth_score   * 0.15 +
-            dynamic_score * 0.40
+            dynamic_score * 0.25
         )
 
-        if liveness_score < 0.65:
+        if liveness_score < 0.60:
             return False, liveness_score, f"Liveness check failed ({dynamic_msg}, score={liveness_score:.2f})"
 
         return True, liveness_score, f"Live human verified ({dynamic_msg})"
@@ -619,3 +608,4 @@ class FaceEngine:
         self._blendshape_history.clear()
         self._iris_history.clear()
         self._geom_history.clear()
+        self._spoof_cooldown = 0
