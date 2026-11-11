@@ -14,13 +14,16 @@ from engine.face_engine import FaceEngine
 from engine.storage import save_profile
 
 STEPS = [
-    {"name": "LOOK STRAIGHT", "target_count": 5, "instruction": "Look directly at the camera"},
-    {"name": "TURN SLIGHTLY LEFT", "target_count": 3, "instruction": "Turn your head slightly to the LEFT"},
-    {"name": "TURN SLIGHTLY RIGHT", "target_count": 3, "instruction": "Turn your head slightly to the RIGHT"},
-    {"name": "TILT / SMILE", "target_count": 3, "instruction": "Tilt head slightly or smile naturally"}
+    {"name": "LOOK STRAIGHT",      "target_count": 7, "instruction": "Look directly at the camera"},
+    {"name": "TURN SLIGHTLY LEFT",  "target_count": 4, "instruction": "Turn your head slightly to the LEFT"},
+    {"name": "TURN SLIGHTLY RIGHT", "target_count": 4, "instruction": "Turn your head slightly to the RIGHT"},
+    {"name": "TILT HEAD UP",        "target_count": 3, "instruction": "Tilt your head slightly UP"},
+    {"name": "TILT HEAD DOWN",      "target_count": 3, "instruction": "Tilt your head slightly DOWN"},
+    {"name": "SMILE NATURALLY",     "target_count": 3, "instruction": "Smile naturally"},
+    {"name": "NEUTRAL EXPRESSION",  "target_count": 2, "instruction": "Return to neutral face expression"}
 ]
 
-def draw_hud(frame, face, step_info, current_samples, total_samples, liveness_ok, msg):
+def draw_hud(frame, face, step_info, current_samples, total_samples, liveness_ok, msg, engine=None):
     h, w = frame.shape[:2]
     # Darken overlay background for HUD text at top
     overlay = frame.copy()
@@ -34,28 +37,29 @@ def draw_hud(frame, face, step_info, current_samples, total_samples, liveness_ok
     cv2.putText(frame, step_info['instruction'], (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
 
     # Progress counter
-    progress_text = f"Samples: {total_samples}/14"
+    progress_text = f"Samples: {total_samples}/26"
     cv2.putText(frame, progress_text, (w - 180, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
     # Status / instruction at bottom
     status_color = (0, 255, 0) if liveness_ok else (0, 0, 255)
     cv2.putText(frame, msg, (20, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.55, status_color, 1)
 
-    # Face Box & landmarks
+    # Face Box & 478 landmarks
     if face is not None:
         x, y, fw, fh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
         box_color = (0, 255, 0) if liveness_ok else (0, 165, 255)
-        # Bounding box
         cv2.rectangle(frame, (x, y), (x + fw, y + fh), box_color, 2)
 
-        # 5 facial landmarks (right eye, left eye, nose tip, mouth right, mouth left)
-        landmarks = [(int(face[4]), int(face[5])),
-                     (int(face[6]), int(face[7])),
-                     (int(face[8]), int(face[9])),
-                     (int(face[10]), int(face[11])),
-                     (int(face[12]), int(face[13]))]
-        for pt in landmarks:
-            cv2.circle(frame, pt, 3, (0, 255, 255), -1)
+        if engine is not None:
+            engine.draw_landmarks_478(frame, face)
+        else:
+            landmarks = [(int(face[4]), int(face[5])),
+                         (int(face[6]), int(face[7])),
+                         (int(face[8]), int(face[9])),
+                         (int(face[10]), int(face[11])),
+                         (int(face[12]), int(face[13]))]
+            for pt in landmarks:
+                cv2.circle(frame, pt, 3, (0, 255, 255), -1)
 
 def run_enrollment(camera_index=0):
     print("=" * 68)
@@ -88,6 +92,7 @@ def run_enrollment(camera_index=0):
     collected_embeddings = []
     last_sample_time = 0
     msg = "Align your face inside the frame"
+    engine.reset_blink_history()
 
     try:
         while step_idx < len(STEPS):
@@ -97,7 +102,10 @@ def run_enrollment(camera_index=0):
                 continue
 
             current_step = STEPS[step_idx]
-            face, det_msg = engine.detect_face(frame)
+
+            # Adaptive low-light enhancement
+            enhanced = engine.preprocess_lighting(frame)
+            face, det_msg = engine.detect_face(enhanced)
 
             liveness_ok = False
             if face is not None:
@@ -105,9 +113,9 @@ def run_enrollment(camera_index=0):
                 now = time.time()
                 if liveness_ok:
                     msg = f"Good! Hold still ({live_msg})"
-                    # Capture a sample every 0.4 seconds to ensure slight variation
-                    if now - last_sample_time > 0.4:
-                        feature = engine.extract_features(frame, face)
+                    # Capture a sample every 0.35 seconds to ensure multi-angle variation
+                    if now - last_sample_time > 0.35:
+                        feature = engine.extract_features(enhanced, face)
                         collected_embeddings.append(feature)
                         step_samples += 1
                         last_sample_time = now
@@ -115,13 +123,13 @@ def run_enrollment(camera_index=0):
                         if step_samples >= current_step["target_count"]:
                             step_idx += 1
                             step_samples = 0
-                            time.sleep(0.3)
+                            time.sleep(0.2)
                 else:
                     msg = live_msg
             else:
                 msg = det_msg
 
-            draw_hud(frame, face, current_step, step_samples, len(collected_embeddings), liveness_ok, msg)
+            draw_hud(frame, face, current_step, step_samples, len(collected_embeddings), liveness_ok, msg, engine=engine)
             cv2.imshow("Windows Hello Refined - Enrollment", frame)
 
             key = cv2.waitKey(1) & 0xFF
@@ -130,7 +138,7 @@ def run_enrollment(camera_index=0):
                 return False
 
         # All steps completed successfully
-        print("\nAll 14 multi-angle biometric samples collected successfully!")
+        print("\nAll 26 multi-angle biometric samples collected successfully!")
         print("Encrypting with Windows DPAPI...")
         saved_path = save_profile(username, collected_embeddings)
         print(f"Profile securely saved to: {saved_path}")

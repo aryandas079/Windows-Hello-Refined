@@ -86,10 +86,10 @@ class FaceDaemon:
             self.camera = None
             log_service("Camera hardware released (LED off).")
 
-    def verify_current_face(self, timeout_sec=4.0):
+    def verify_current_face(self, timeout_sec=5.0):
         """
         Runs face recognition for up to timeout_sec seconds.
-        Instant ~0.5s matching true Windows Hello experience.
+        Instant matching with 478-landmark anti-spoofing and DPAPI credentials.
         GUARANTEES camera is opened only during verification and released immediately after.
         """
         if not self.profile:
@@ -109,6 +109,8 @@ class FaceDaemon:
 
                 start_time = time.time()
                 frames_tested = 0
+                self.engine.reset_blink_history()
+
                 while time.time() - start_time < timeout_sec:
                     ret, frame = self.camera.read()
                     if not ret:
@@ -116,18 +118,21 @@ class FaceDaemon:
                         continue
 
                     frames_tested += 1
-                    face, status = self.engine.detect_face(frame)
+
+                    # Adaptive low-light preprocessing (gamma boost + CLAHE)
+                    enhanced = self.engine.preprocess_lighting(frame)
+                    face, status = self.engine.detect_face(enhanced)
 
                     if face is not None:
                         is_live, lscore, live_msg = self.engine.check_liveness(frame, face)
-                        feature = self.engine.extract_features(frame, face)
+                        feature = self.engine.extract_features(enhanced, face)
                         is_match, similarity = self.engine.match_face(feature, enrolled)
 
-                        log_service(f"Frame {frames_tested}: live={is_live} ({live_msg}), match={is_match} (sim={similarity:.3f})")
+                        log_service(f"Frame {frames_tested}: live={is_live} ({live_msg}, score={lscore:.2f}), match={is_match} (sim={similarity:.3f})")
 
-                        # Verified match: either full liveness + match, OR very high biometric match
-                        if is_match and (is_live or similarity >= 0.42):
-                            log_service(f"Match verified! User: {username}, Similarity: {similarity:.2f}")
+                        # Verified genuine match: requires both biometric match AND anti-spoof liveness
+                        if is_match and is_live:
+                            log_service(f"Match verified! User: {username}, Similarity: {similarity:.2f}, Liveness: {lscore:.2f}")
                             creds = load_credentials()
                             resp = {
                                 "status": "verified",
@@ -169,7 +174,7 @@ class FaceDaemon:
                 }
             elif cmd_str == "VERIFY":
                 log_service("Lock screen requested face verification...")
-                response = self.verify_current_face(timeout_sec=4.0)
+                response = self.verify_current_face(timeout_sec=5.0)
                 log_service(f"Verification outcome: status={response.get('status')}")
             elif cmd_str in ("STOP", "EXIT", "RESTART"):
                 log_service("Received STOP/RESTART command. Terminating daemon process...")

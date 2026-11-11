@@ -45,6 +45,7 @@ def run_live_test(camera_index=0):
 
     prev_time = time.time()
     fps = 0.0
+    engine.reset_blink_history()
 
     try:
         while True:
@@ -69,6 +70,7 @@ def run_live_test(camera_index=0):
                 if not is_live:
                     status_text = f"SPOOF DETECTED: {live_msg}"
                     status_color = (0, 0, 255)  # Red
+                    score_text = f"Liveness Score: {live_score * 100:.1f}% | Anti-Spoof: REJECTED"
                     cv2.rectangle(frame, (x, y), (x + fw, y + fh), status_color, 2)
                 else:
                     query_feature = engine.extract_features(enhanced, face)
@@ -77,22 +79,16 @@ def run_live_test(camera_index=0):
                     if is_match:
                         status_text = f"WELCOME, {username.upper()}!"
                         status_color = (0, 255, 0)  # Green
-                        score_text = f"Match Confidence: {similarity * 100:.1f}%"
+                        score_text = f"Match Confidence: {similarity * 100:.1f}% | Liveness: {live_score * 100:.1f}%"
                         cv2.rectangle(frame, (x, y), (x + fw, y + fh), status_color, 3)
                     else:
                         status_text = "UNKNOWN FACE - ACCESS DENIED"
                         status_color = (0, 140, 255)  # Orange
-                        score_text = f"Score: {similarity * 100:.1f}% (Below threshold)"
+                        score_text = f"Score: {similarity * 100:.1f}% | Liveness: {live_score * 100:.1f}%"
                         cv2.rectangle(frame, (x, y), (x + fw, y + fh), status_color, 2)
 
-                # Landmarks
-                landmarks = [(int(face[4]), int(face[5])),
-                             (int(face[6]), int(face[7])),
-                             (int(face[8]), int(face[9])),
-                             (int(face[10]), int(face[11])),
-                             (int(face[12]), int(face[13]))]
-                for pt in landmarks:
-                    cv2.circle(frame, pt, 2, (0, 255, 255), -1)
+                # Draw 478 MediaPipe dense landmarks with anatomically color-coded regions
+                engine.draw_landmarks_478(frame, face)
 
             proc_ms = (time.perf_counter() - start_proc) * 1000
 

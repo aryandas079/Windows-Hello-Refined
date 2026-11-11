@@ -212,22 +212,11 @@ void FaceOverlay::RunAnimation()
 
     if (m_scenario == 4) // CPUS_CREDUI (Windows Security dialog)
     {
-        if (hwndSec && IsWindowVisible(hwndSec))
-        {
-            RECT rc;
-            if (GetWindowRect(hwndSec, &rc))
-            {
-                posX = rc.left + ((rc.right - rc.left) - winW) / 2;
-                posY = rc.top + (int)((rc.bottom - rc.top) * 0.22f);
-                LogOverlay(L"CredUI dialog found at (%ld,%ld %ldx%ld). Anchoring overlay inside card at (%d,%d)",
-                           rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, posX, posY);
-            }
-        }
-        else
-        {
-            posY = mi.rcWork.top + (monH / 2) - 145;
-            LogOverlay(L"CredUI scenario 4 fallback: centered at (%d,%d)", posX, posY);
-        }
+        // On modern Windows 11, the CredUI dialog card is horizontally and vertically centered.
+        // Placing overlay at (monH / 2) - 145 positions the face and status directly over the
+        // static 9 blue dots, right above the native PIN entry box!
+        posY = mi.rcWork.top + (monH / 2) - 145;
+        LogOverlay(L"CredUI dialog scenario 4: centered inside dialog card at (%d,%d)", posX, posY);
     }
 
     m_hwnd = CreateWindowExW(
@@ -406,11 +395,10 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
             bLightTheme = true;
         }
 
-        // Draw card background to cleanly cover ONLY the static 9 blue dots and "Enter your PIN"
-        // without overlapping the email address or PIN input box below!
+        // Draw card background to cleanly cover the 9-dots icon and "Enter your PIN"
         Gdiplus::Color cardBg = bLightTheme ? Gdiplus::Color(255, 255, 255, 255) : Gdiplus::Color(255, 32, 32, 32);
         Gdiplus::SolidBrush cardBgBrush(cardBg);
-        g.FillRectangle(&cardBgBrush, 40, 10, width - 80, 75);
+        g.FillRectangle(&cardBgBrush, 30, 8, width - 60, height - 16);
     }
 
     Gdiplus::Color accentColor;

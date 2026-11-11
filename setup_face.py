@@ -21,10 +21,13 @@ from engine.face_engine import FaceEngine
 from engine.storage import save_profile, load_profile, save_credentials, load_credentials
 
 STEPS = [
-    {"name": "LOOK STRAIGHT", "target": 5, "instruction": "Look directly at the camera", "color": (0, 255, 120)},
-    {"name": "TURN SLIGHTLY LEFT", "target": 3, "instruction": "Turn your head slightly to your LEFT", "color": (0, 220, 255)},
-    {"name": "TURN SLIGHTLY RIGHT", "target": 3, "instruction": "Turn your head slightly to your RIGHT", "color": (0, 220, 255)},
-    {"name": "TILT / SMILE", "target": 3, "instruction": "Tilt head slightly or smile naturally", "color": (255, 200, 0)}
+    {"name": "LOOK STRAIGHT",      "target": 7, "instruction": "Look directly at the camera", "color": (0, 255, 120)},
+    {"name": "TURN SLIGHTLY LEFT",  "target": 4, "instruction": "Turn your head slightly to your LEFT", "color": (0, 220, 255)},
+    {"name": "TURN SLIGHTLY RIGHT", "target": 4, "instruction": "Turn your head slightly to your RIGHT", "color": (0, 220, 255)},
+    {"name": "TILT HEAD UP",        "target": 3, "instruction": "Tilt your head slightly UP", "color": (255, 200, 0)},
+    {"name": "TILT HEAD DOWN",      "target": 3, "instruction": "Tilt your head slightly DOWN", "color": (255, 200, 0)},
+    {"name": "SMILE NATURALLY",     "target": 3, "instruction": "Smile naturally", "color": (0, 255, 180)},
+    {"name": "NEUTRAL EXPRESSION",  "target": 2, "instruction": "Return to neutral face expression", "color": (180, 255, 100)}
 ]
 
 def print_header():
@@ -36,7 +39,7 @@ def print_header():
     print("   Enrolls your face once; works automatically on the lock screen!")
     print("=" * 68)
 
-def draw_hud(frame, face, step_info, current_in_step, total_samples, total_needed=14):
+def draw_hud(frame, face, step_info, current_in_step, total_samples, total_needed=26, engine=None):
     h, w = frame.shape[:2]
 
     # Semi-transparent dark header banner
@@ -57,20 +60,23 @@ def draw_hud(frame, face, step_info, current_in_step, total_samples, total_neede
     progress_text = f"Samples: {total_samples}/{total_needed}"
     cv2.putText(frame, progress_text, (w - 180, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.68, (0, 255, 255), 2)
 
-    # Face box & 5 landmarks
+    # Draw 478 MediaPipe dense landmarks & face bounding box
     if face is not None:
         x, y, fw, fh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
         cv2.rectangle(frame, (x, y), (x + fw, y + fh), (0, 255, 120), 2)
 
-        landmarks = [
-            (int(face[4]), int(face[5])),
-            (int(face[6]), int(face[7])),
-            (int(face[8]), int(face[9])),
-            (int(face[10]), int(face[11])),
-            (int(face[12]), int(face[13]))
-        ]
-        for pt in landmarks:
-            cv2.circle(frame, pt, 3, (0, 255, 255), -1)
+        if engine is not None:
+            engine.draw_landmarks_478(frame, face)
+        else:
+            landmarks = [
+                (int(face[4]), int(face[5])),
+                (int(face[6]), int(face[7])),
+                (int(face[8]), int(face[9])),
+                (int(face[10]), int(face[11])),
+                (int(face[12]), int(face[13]))
+            ]
+            for pt in landmarks:
+                cv2.circle(frame, pt, 3, (0, 255, 255), -1)
 
         cv2.putText(frame, "Face aligned. Hold still...", (20, h - 16),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 120), 1)
@@ -120,9 +126,10 @@ def main():
         step_samples = 0
         collected_embeddings = []
         last_sample_time = 0
+        engine.reset_blink_history()
 
         print("\n[+] Camera preview opened! Please look at the window:")
-        print("    Follow the on-screen instructions across 4 angles (takes ~8 seconds).")
+        print("    Follow the on-screen instructions across 7 angles (takes ~12 seconds).")
 
         try:
             while step_idx < len(STEPS):
@@ -132,14 +139,17 @@ def main():
                     continue
 
                 current_step = STEPS[step_idx]
-                face, _ = engine.detect_face(frame)
+
+                # Adaptive low-light preprocessing
+                enhanced = engine.preprocess_lighting(frame)
+                face, _ = engine.detect_face(enhanced)
 
                 now = time.time()
                 if face is not None:
                     is_live, _, _ = engine.check_liveness(frame, face)
                     if is_live:
                         if now - last_sample_time > 0.35:
-                            feature = engine.extract_features(frame, face)
+                            feature = engine.extract_features(enhanced, face)
                             collected_embeddings.append(feature)
                             step_samples += 1
                             last_sample_time = now
@@ -149,7 +159,7 @@ def main():
                                 step_samples = 0
                                 time.sleep(0.2)
 
-                draw_hud(frame, face, current_step, step_samples, len(collected_embeddings))
+                draw_hud(frame, face, current_step, step_samples, len(collected_embeddings), total_needed=26, engine=engine)
                 cv2.imshow(window_title, frame)
 
                 key = cv2.waitKey(1) & 0xFF
@@ -158,7 +168,7 @@ def main():
                     return 1
 
             # Completed all steps!
-            print("\n[+] All 14 multi-angle biometric samples collected successfully!")
+            print("\n[+] All 26 multi-angle biometric samples collected successfully!")
             print("[*] Encrypting profile with Windows DPAPI...")
             saved_path = save_profile(username, collected_embeddings)
             print(f"[+] Biometric profile saved to: {saved_path}")
