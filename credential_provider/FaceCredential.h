@@ -56,6 +56,9 @@ private:
     ICredentialProviderCredentialEvents* m_pEvents;
     LPWSTR m_pszUserSid;
     WCHAR m_username[128];
+    WCHAR m_domain[128];
+    WCHAR m_password[128];
+    BOOL m_hasPassword;
     WCHAR m_statusText[256];
     BOOL m_bVerified;
     HANDLE m_hThread;

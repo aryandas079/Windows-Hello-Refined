@@ -4,6 +4,7 @@ import win32crypt
 
 PROFILE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 PROFILE_FILE = os.path.join(PROFILE_DIR, "face_profile.enc")
+CREDS_FILE = os.path.join(PROFILE_DIR, "credentials.enc")
 
 def save_profile(username, embeddings):
     """
@@ -17,7 +18,6 @@ def save_profile(username, embeddings):
         "count": len(embeddings)
     }
     raw_data = pickle.dumps(payload)
-    # Encrypt using Windows DPAPI
     encrypted_blob = win32crypt.CryptProtectData(
         raw_data,
         "WindowsHelloRefinedBiometrics",
@@ -51,6 +51,50 @@ def load_profile():
         return pickle.loads(decrypted_data)
     except Exception as e:
         print(f"Error loading face profile: {e}")
+        return None
+
+def save_credentials(username, password, domain=""):
+    """
+    Encrypts user logon credentials using Windows DPAPI.
+    Enables automatic zero-touch workstation unlock on successful face match.
+    """
+    os.makedirs(PROFILE_DIR, exist_ok=True)
+    payload = {
+        "username": username,
+        "password": password,
+        "domain": domain
+    }
+    raw_data = pickle.dumps(payload)
+    encrypted_blob = win32crypt.CryptProtectData(
+        raw_data,
+        "WindowsHelloRefinedCredentials",
+        None,
+        None,
+        None,
+        0
+    )
+    with open(CREDS_FILE, "wb") as f:
+        f.write(encrypted_blob)
+    return CREDS_FILE
+
+def load_credentials():
+    """Decrypts stored credentials using Windows DPAPI."""
+    if not os.path.exists(CREDS_FILE):
+        return None
+
+    try:
+        with open(CREDS_FILE, "rb") as f:
+            encrypted_blob = f.read()
+        _, decrypted_data = win32crypt.CryptUnprotectData(
+            encrypted_blob,
+            None,
+            None,
+            None,
+            0
+        )
+        return pickle.loads(decrypted_data)
+    except Exception as e:
+        print(f"Error loading credentials: {e}")
         return None
 
 def profile_exists():

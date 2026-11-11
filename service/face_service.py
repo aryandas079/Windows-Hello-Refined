@@ -15,7 +15,7 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
 from engine.face_engine import FaceEngine
-from engine.storage import load_profile
+from engine.storage import load_profile, load_credentials
 
 PIPE_NAME = r"\\.\pipe\WindowsHelloRefinedPipe"
 
@@ -106,12 +106,17 @@ class FaceDaemon:
 
                     if is_match:
                         print(f"[*] Match verified! Similarity: {similarity:.2f}")
-                        return {
+                        creds = load_credentials()
+                        resp = {
                             "status": "verified",
                             "username": username,
                             "confidence": round(similarity * 100, 1),
                             "message": f"Welcome back, {username}!"
                         }
+                        if creds and creds.get("password"):
+                            resp["password"] = creds["password"]
+                            resp["domain"] = creds.get("domain", "")
+                        return resp
 
                 time.sleep(0.01)
 

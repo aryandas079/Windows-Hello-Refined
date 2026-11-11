@@ -11,7 +11,7 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
 from engine.face_engine import FaceEngine
-from engine.storage import save_profile, load_profile
+from engine.storage import save_profile, load_profile, save_credentials, load_credentials
 
 STEPS = [
     {"name": "LOOK STRAIGHT", "target": 5, "instruction": "Look directly at the camera", "color": (0, 255, 120)},
@@ -156,6 +156,26 @@ def main():
     finally:
         cap.release()
         cv2.destroyAllWindows()
+
+    # ── Optional: Save Windows password for automatic lock screen unlock ───
+    print("\n" + "-" * 65)
+    print("  WINDOWS AUTO-UNLOCK (OPTIONAL)")
+    print("  To automatically unlock your screen when your face is recognized,")
+    print("  enter your Windows password once (encrypted with Windows DPAPI).")
+    print("  If you press Enter without typing a password, Face ID will verify")
+    print("  and allow you to click 'Unlock' or enter your PIN as usual.")
+    print("-" * 65)
+
+    try:
+        domain = os.environ.get("USERDOMAIN", "")
+        entered_pwd = getpass.getpass(f"Enter Windows password for [{username}] (or press Enter to skip): ")
+        if entered_pwd.strip():
+            save_credentials(username, entered_pwd.strip(), domain)
+            print("[+] Windows credentials encrypted with DPAPI for seamless auto-unlock.")
+        else:
+            print("[*] Skipping password storage. Manual PIN/Password unlock available.")
+    except Exception as e:
+        print(f"[*] Note: {e}")
 
     # ── Self-test validation ──────────────────────────────────────────
     print("\n[*] Running instant self-test validation...")

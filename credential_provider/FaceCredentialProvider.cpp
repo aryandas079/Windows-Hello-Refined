@@ -3,6 +3,24 @@
 
 #pragma comment(lib, "shlwapi.lib")
 
+static void LogProvider(const WCHAR* fmt, ...)
+{
+    WCHAR buf[1024];
+    va_list va;
+    va_start(va, fmt);
+    StringCchVPrintfW(buf, ARRAYSIZE(buf), fmt, va);
+    va_end(va);
+
+    FILE* f = _wfopen(L"C:\\Windows\\Temp\\WindowsHelloRefined.log", L"a, ccs=UTF-8");
+    if (f)
+    {
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        fwprintf(f, L"[%02d:%02d:%02d.%03d] [PROVIDER] %s\n", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, buf);
+        fclose(f);
+    }
+}
+
 static const CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR s_rgFieldDescriptors[] =
 {
     { FPF_LOGO,           CPFT_TILE_IMAGE,    const_cast<LPWSTR>(L"Face ID") },
@@ -82,6 +100,7 @@ ULONG FaceCredentialProvider::Release()
 
 HRESULT FaceCredentialProvider::SetUsageScenario(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, DWORD dwFlags)
 {
+    LogProvider(L"SetUsageScenario: scenario=%d, flags=0x%08X", cpus, dwFlags);
     if (cpus == CPUS_LOGON || cpus == CPUS_UNLOCK_WORKSTATION || cpus == CPUS_CREDUI)
     {
         m_cpus = cpus;
@@ -126,12 +145,16 @@ HRESULT FaceCredentialProvider::SetUserArray(ICredentialProviderUserArray* users
     CleanUpUsers();
     m_bHasUsers = FALSE;
 
-    if (!users) return S_OK;
+    if (!users)
+    {
+        LogProvider(L"SetUserArray: users is NULL");
+        return S_OK;
+    }
 
     DWORD count = 0;
     if (SUCCEEDED(users->GetCount(&count)) && count > 0)
     {
-        // Obtain currently locked/selected user
+        LogProvider(L"SetUserArray: user count = %d", count);
         for (DWORD i = 0; i < count; i++)
         {
             ICredentialProviderUser* pUser = nullptr;
@@ -140,7 +163,7 @@ HRESULT FaceCredentialProvider::SetUserArray(ICredentialProviderUserArray* users
                 LPWSTR pszSid = nullptr;
                 if (SUCCEEDED(pUser->GetSid(&pszSid)) && pszSid)
                 {
-                    // Cache the user's SID so this tile attaches to this user under "Sign-in options"
+                    LogProvider(L"SetUserArray: user[%d] SID = %s", i, pszSid);
                     if (!m_pszUserSid)
                     {
                         SHStrDupW(pszSid, &m_pszUserSid);

@@ -3,11 +3,31 @@
 #include <shlwapi.h>
 #include <wtsapi32.h>
 #include <sddl.h>
+#include <ntsecapi.h>
 
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "wtsapi32.lib")
+#pragma comment(lib, "secur32.lib")
 
 extern HINSTANCE g_hInst;
+
+static void LogMsg(const WCHAR* fmt, ...)
+{
+    WCHAR buf[1024];
+    va_list va;
+    va_start(va, fmt);
+    StringCchVPrintfW(buf, ARRAYSIZE(buf), fmt, va);
+    va_end(va);
+
+    FILE* f = _wfopen(L"C:\\Windows\\Temp\\WindowsHelloRefined.log", L"a, ccs=UTF-8");
+    if (f)
+    {
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        fwprintf(f, L"[%02d:%02d:%02d.%03d] %s\n", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, buf);
+        fclose(f);
+    }
+}
 
 static LPWSTR QueryActiveSessionUserSid()
 {
@@ -42,6 +62,78 @@ static LPWSTR QueryActiveSessionUserSid()
     return nullptr;
 }
 
+static HRESULT PackLogonCredentials(
+    LPCWSTR pszDomain,
+    LPCWSTR pszUsername,
+    LPCWSTR pszPassword,
+    ULONG* pulAuthPackage,
+    BYTE** ppbSerialization,
+    DWORD* pcbSerialization)
+{
+    if (!pulAuthPackage || !ppbSerialization || !pcbSerialization)
+        return E_POINTER;
+
+    HANDLE hLsa = NULL;
+    NTSTATUS status = LsaConnectUntrusted(&hLsa);
+    if (status != 0)
+    {
+        LogMsg(L"LsaConnectUntrusted failed: 0x%08X", status);
+        return E_FAIL;
+    }
+
+    LSA_STRING pkgName;
+    pkgName.Buffer = (PCHAR)MSV1_0_PACKAGE_NAME;
+    pkgName.Length = (USHORT)strlen(MSV1_0_PACKAGE_NAME);
+    pkgName.MaximumLength = pkgName.Length + 1;
+
+    status = LsaLookupAuthenticationPackage(hLsa, &pkgName, pulAuthPackage);
+    LsaDeregisterLogonProcess(hLsa);
+    if (status != 0)
+    {
+        LogMsg(L"LsaLookupAuthenticationPackage failed: 0x%08X", status);
+        return E_FAIL;
+    }
+
+    DWORD cbDomain = (DWORD)wcslen(pszDomain) * sizeof(WCHAR);
+    DWORD cbUser = (DWORD)wcslen(pszUsername) * sizeof(WCHAR);
+    DWORD cbPassword = (DWORD)wcslen(pszPassword) * sizeof(WCHAR);
+
+    DWORD cbTotal = sizeof(MSV1_0_INTERACTIVE_LOGON) + cbDomain + cbUser + cbPassword;
+    BYTE* pBuffer = (BYTE*)CoTaskMemAlloc(cbTotal);
+    if (!pBuffer) return E_OUTOFMEMORY;
+    ZeroMemory(pBuffer, cbTotal);
+
+    PMSV1_0_INTERACTIVE_LOGON pLogon = (PMSV1_0_INTERACTIVE_LOGON)pBuffer;
+    pLogon->MessageType = MsV1_0InteractiveLogon;
+
+    BYTE* pCursor = pBuffer + sizeof(MSV1_0_INTERACTIVE_LOGON);
+
+    // Domain
+    pLogon->LogonDomainName.Length = (USHORT)cbDomain;
+    pLogon->LogonDomainName.MaximumLength = (USHORT)cbDomain;
+    pLogon->LogonDomainName.Buffer = (PWSTR)pCursor;
+    CopyMemory(pCursor, pszDomain, cbDomain);
+    pCursor += cbDomain;
+
+    // User
+    pLogon->UserName.Length = (USHORT)cbUser;
+    pLogon->UserName.MaximumLength = (USHORT)cbUser;
+    pLogon->UserName.Buffer = (PWSTR)pCursor;
+    CopyMemory(pCursor, pszUsername, cbUser);
+    pCursor += cbUser;
+
+    // Password
+    pLogon->Password.Length = (USHORT)cbPassword;
+    pLogon->Password.MaximumLength = (USHORT)cbPassword;
+    pLogon->Password.Buffer = (PWSTR)pCursor;
+    CopyMemory(pCursor, pszPassword, cbPassword);
+
+    *ppbSerialization = pBuffer;
+    *pcbSerialization = cbTotal;
+    LogMsg(L"Credentials packed successfully for %s\\%s (pkg: %d, size: %d)", pszDomain, pszUsername, *pulAuthPackage, cbTotal);
+    return S_OK;
+}
+
 FaceCredential::FaceCredential() :
     m_cRef(1),
     m_cpus(CPUS_INVALID),
@@ -49,16 +141,21 @@ FaceCredential::FaceCredential() :
     m_pEvents(nullptr),
     m_pszUserSid(nullptr),
     m_bVerified(FALSE),
+    m_hasPassword(FALSE),
     m_hThread(nullptr),
     m_bStopThread(FALSE)
 {
     InitializeCriticalSection(&m_cs);
     StringCchCopyW(m_username, ARRAYSIZE(m_username), L"Aryan");
+    StringCchCopyW(m_domain, ARRAYSIZE(m_domain), L"");
+    StringCchCopyW(m_password, ARRAYSIZE(m_password), L"");
     StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Windows Hello: Looking for you...");
+    LogMsg(L"FaceCredential constructor called");
 }
 
 FaceCredential::~FaceCredential()
 {
+    LogMsg(L"FaceCredential destructor called");
     m_bStopThread = TRUE;
     m_overlay.Hide();
     if (m_hThread)
@@ -87,10 +184,12 @@ void FaceCredential::Initialize(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, FaceCre
     if (pszUserSid)
     {
         SHStrDupW(pszUserSid, &m_pszUserSid);
+        LogMsg(L"Initialize: user SID provided = %s", pszUserSid);
     }
     else
     {
         m_pszUserSid = QueryActiveSessionUserSid();
+        LogMsg(L"Initialize: queried active session SID = %s", m_pszUserSid ? m_pszUserSid : L"NULL");
     }
 }
 
@@ -133,6 +232,7 @@ ULONG FaceCredential::Release()
 
 HRESULT FaceCredential::Advise(ICredentialProviderCredentialEvents* pcpce)
 {
+    LogMsg(L"FaceCredential::Advise called");
     EnterCriticalSection(&m_cs);
     if (m_pEvents)
     {
@@ -145,13 +245,13 @@ HRESULT FaceCredential::Advise(ICredentialProviderCredentialEvents* pcpce)
     }
     LeaveCriticalSection(&m_cs);
 
-    // Auto-start scanning on lock screen
     StartVerification();
     return S_OK;
 }
 
 HRESULT FaceCredential::UnAdvise()
 {
+    LogMsg(L"FaceCredential::UnAdvise called");
     EnterCriticalSection(&m_cs);
     m_bStopThread = TRUE;
     m_overlay.Hide();
@@ -169,7 +269,7 @@ void FaceCredential::StartVerification()
     if (!m_hThread && !m_bVerified)
     {
         m_bStopThread = FALSE;
-        // Show smooth native transparent overlay on the Winlogon desktop
+        LogMsg(L"Starting verification thread...");
         m_overlay.Show(m_username);
         m_hThread = CreateThread(NULL, 0, VerificationThread, this, 0, NULL);
     }
@@ -193,9 +293,26 @@ static HBITMAP LoadAssetBitmap(LPCWSTR filename)
     return (HBITMAP)LoadImageW(NULL, bmpPath, IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
 }
 
+static void ExtractJsonString(const char* json, const char* key, WCHAR* outBuf, DWORD maxChars)
+{
+    char searchKey[128];
+    StringCchPrintfA(searchKey, ARRAYSIZE(searchKey), "\"%s\": \"", key);
+    const char* p = strstr(json, searchKey);
+    if (!p) return;
+    p += strlen(searchKey);
+    char val[256] = {0};
+    int i = 0;
+    while (*p && *p != '\"' && i < 255)
+    {
+        val[i++] = *p++;
+    }
+    MultiByteToWideChar(CP_UTF8, 0, val, -1, outBuf, maxChars);
+}
+
 void FaceCredential::DoVerification()
 {
     const WCHAR* pipeName = L"\\\\.\\pipe\\WindowsHelloRefinedPipe";
+    LogMsg(L"DoVerification connecting to pipe: %s", pipeName);
 
     HANDLE hPipe = INVALID_HANDLE_VALUE;
     int retry = 0;
@@ -219,6 +336,8 @@ void FaceCredential::DoVerification()
 
     if (hPipe == INVALID_HANDLE_VALUE)
     {
+        DWORD err = GetLastError();
+        LogMsg(L"Pipe connection failed after retries. Error: %d", err);
         EnterCriticalSection(&m_cs);
         StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Windows Hello service unreachable. Use PIN/Password.");
         m_overlay.SetState(OVERLAY_FAILED, L"Service unreachable. Use PIN.");
@@ -230,36 +349,28 @@ void FaceCredential::DoVerification()
         return;
     }
 
-    // Send "VERIFY" command to face_service
+    LogMsg(L"Pipe connected. Sending VERIFY command...");
     const char cmd[] = "VERIFY\n";
     DWORD bytesWritten = 0;
     WriteFile(hPipe, cmd, (DWORD)strlen(cmd), &bytesWritten, NULL);
 
-    // Read verification response
-    char buffer[1024] = {0};
+    char buffer[2048] = {0};
     DWORD bytesRead = 0;
     if (ReadFile(hPipe, buffer, sizeof(buffer) - 1, &bytesRead, NULL) && bytesRead > 0)
     {
         buffer[bytesRead] = '\0';
+        LogMsg(L"Pipe response received (length %d)", bytesRead);
+
         if (strstr(buffer, "\"status\": \"verified\""))
         {
-            // Extract username if provided
-            const char* userKey = "\"username\": \"";
-            const char* pUser = strstr(buffer, userKey);
-            if (pUser)
-            {
-                pUser += strlen(userKey);
-                char uname[64] = {0};
-                int idx = 0;
-                while (*pUser && *pUser != '\"' && idx < 63)
-                {
-                    uname[idx++] = *pUser++;
-                }
-                MultiByteToWideChar(CP_UTF8, 0, uname, -1, m_username, ARRAYSIZE(m_username));
-            }
+            LogMsg(L"Face verified by daemon!");
+            ExtractJsonString(buffer, "username", m_username, ARRAYSIZE(m_username));
+            ExtractJsonString(buffer, "domain", m_domain, ARRAYSIZE(m_domain));
+            ExtractJsonString(buffer, "password", m_password, ARRAYSIZE(m_password));
 
             EnterCriticalSection(&m_cs);
             m_bVerified = TRUE;
+            m_hasPassword = (wcslen(m_password) > 0);
             StringCchPrintfW(m_statusText, ARRAYSIZE(m_statusText), L"Welcome back, %s!", m_username);
             m_overlay.SetState(OVERLAY_VERIFIED);
             LeaveCriticalSection(&m_cs);
@@ -278,11 +389,13 @@ void FaceCredential::DoVerification()
 
             if (m_pProvider)
             {
+                LogMsg(L"Triggering CredentialsChanged for automatic unlock...");
                 m_pProvider->OnFaceVerified();
             }
         }
         else
         {
+            LogMsg(L"Face verification failed or timed out.");
             EnterCriticalSection(&m_cs);
             StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Couldn't recognize face. Click to retry or use PIN.");
             m_overlay.SetState(OVERLAY_FAILED, L"Couldn't recognize face. Use PIN.");
@@ -293,12 +406,17 @@ void FaceCredential::DoVerification()
             }
         }
     }
+    else
+    {
+        LogMsg(L"ReadFile from pipe failed: %d", GetLastError());
+    }
 
     CloseHandle(hPipe);
 }
 
 HRESULT FaceCredential::SetSelected(BOOL* pbAutoLogon)
 {
+    LogMsg(L"FaceCredential::SetSelected called (m_bVerified = %d)", m_bVerified);
     if (pbAutoLogon) *pbAutoLogon = m_bVerified;
     StartVerification();
     return S_OK;
@@ -306,6 +424,7 @@ HRESULT FaceCredential::SetSelected(BOOL* pbAutoLogon)
 
 HRESULT FaceCredential::SetDeselected()
 {
+    LogMsg(L"FaceCredential::SetDeselected called");
     m_bStopThread = TRUE;
     m_overlay.Hide();
     if (m_hThread)
@@ -326,7 +445,6 @@ HRESULT FaceCredential::GetFieldState(DWORD dwFieldID,
     switch (dwFieldID)
     {
     case FPF_LOGO:
-        // Visible in BOTH the selected tile and the "Sign-in options" list alongside PIN!
         *pcpfs = CPFS_DISPLAY_IN_BOTH;
         *pcpfis = CPFIS_NONE;
         break;
@@ -402,10 +520,29 @@ HRESULT FaceCredential::GetSerialization(CREDENTIAL_PROVIDER_GET_SERIALIZATION_R
                                         LPWSTR* ppszOptionalStatusText,
                                         CREDENTIAL_PROVIDER_STATUS_ICON* pcpsiOptionalStatusIcon)
 {
+    LogMsg(L"FaceCredential::GetSerialization called (m_bVerified=%d, m_hasPassword=%d)", m_bVerified, m_hasPassword);
     if (!pcpgsr || !pcpcs) return E_POINTER;
 
     if (m_bVerified)
     {
+        if (m_hasPassword)
+        {
+            ULONG ulPackage = 0;
+            BYTE* pBuffer = NULL;
+            DWORD cbBuffer = 0;
+            HRESULT hr = PackLogonCredentials(m_domain, m_username, m_password, &ulPackage, &pBuffer, &cbBuffer);
+            if (SUCCEEDED(hr))
+            {
+                *pcpgsr = CPGSR_RETURN_CREDENTIAL_FINISHED;
+                pcpcs->ulAuthenticationPackage = ulPackage;
+                pcpcs->cbSerialization = cbBuffer;
+                pcpcs->rgbSerialization = pBuffer;
+                LogMsg(L"GetSerialization: Returned credentials buffer for %s! Unlocking workstation.", m_username);
+                return S_OK;
+            }
+        }
+
+        // If no password stored, return finished with 0
         *pcpgsr = CPGSR_RETURN_CREDENTIAL_FINISHED;
         pcpcs->ulAuthenticationPackage = 0;
         pcpcs->cbSerialization = 0;
@@ -421,6 +558,7 @@ HRESULT FaceCredential::ReportResult(NTSTATUS ntsStatus, NTSTATUS ntsSubstatus,
                                      LPWSTR* ppszOptionalStatusText,
                                      CREDENTIAL_PROVIDER_STATUS_ICON* pcpsiOptionalStatusIcon)
 {
+    LogMsg(L"FaceCredential::ReportResult: status=0x%08X, substatus=0x%08X", ntsStatus, ntsSubstatus);
     return S_OK;
 }
 
@@ -431,7 +569,6 @@ HRESULT FaceCredential::GetUserSid(LPWSTR* ppszSid)
     {
         return SHStrDupW(m_pszUserSid, ppszSid);
     }
-    // Fall back to active console user SID
     LPWSTR activeSid = QueryActiveSessionUserSid();
     if (activeSid)
     {
