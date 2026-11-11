@@ -284,13 +284,79 @@ DWORD WINAPI FaceCredential::VerificationThread(LPVOID lpParam)
 
 static HBITMAP LoadAssetBitmap(LPCWSTR filename)
 {
-    WCHAR bmpPath[MAX_PATH] = {0};
-    GetModuleFileNameW(g_hInst, bmpPath, ARRAYSIZE(bmpPath));
-    PathRemoveFileSpecW(bmpPath);
-    PathAppendW(bmpPath, L"..\\assets");
-    PathAppendW(bmpPath, filename);
+    // First attempt to load with GDI+ for full 32-bit alpha support
+    WCHAR assetPath[MAX_PATH] = {0};
+    GetModuleFileNameW(g_hInst, assetPath, ARRAYSIZE(assetPath));
+    PathRemoveFileSpecW(assetPath);
+    PathAppendW(assetPath, L"..\\assets");
+    PathAppendW(assetPath, filename);
 
-    return (HBITMAP)LoadImageW(NULL, bmpPath, IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
+    Gdiplus::Bitmap* pBmp = Gdiplus::Bitmap::FromFile(assetPath);
+    if (pBmp && pBmp->GetLastStatus() == Gdiplus::Ok)
+    {
+        HBITMAP hbmp = NULL;
+        pBmp->GetHBITMAP(Gdiplus::Color(0, 0, 0, 0), &hbmp);
+        delete pBmp;
+        if (hbmp)
+        {
+            LogMsg(L"Loaded asset bitmap via GDI+: %s", filename);
+            return hbmp;
+        }
+    }
+    if (pBmp) delete pBmp;
+
+    // Fallback: draw pixel-perfect official Windows Hello Face logo directly in memory
+    LogMsg(L"Generating high-resolution Windows Hello face glyph for tile...");
+    const int iconSize = 128;
+    HDC hdcScreen = GetDC(NULL);
+    HDC hdcMem = CreateCompatibleDC(hdcScreen);
+
+    BITMAPINFO bmi = {0};
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = iconSize;
+    bmi.bmiHeader.biHeight = -iconSize; // top-down
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+    void* pBits = NULL;
+    HBITMAP hDIB = CreateDIBSection(hdcMem, &bmi, DIB_RGB_COLORS, &pBits, NULL, 0);
+    HBITMAP hOld = (HBITMAP)SelectObject(hdcMem, hDIB);
+
+    {
+        Gdiplus::Graphics g(hdcMem);
+        g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        g.Clear(Gdiplus::Color(0, 0, 0, 0)); // Pure transparent background
+
+        Gdiplus::Color white(255, 255, 255, 255);
+        Gdiplus::SolidBrush whiteBrush(white);
+        Gdiplus::Pen whitePen(white, 7.0f);
+        whitePen.SetStartCap(Gdiplus::LineCapRound);
+        whitePen.SetEndCap(Gdiplus::LineCapRound);
+
+        // Windows Hello bottom smile arc (from 25 to 155 degrees)
+        g.DrawArc(&whitePen, 20.0f, 20.0f, 88.0f, 88.0f, 25.0f, 130.0f);
+
+        // Left eye
+        g.FillEllipse(&whiteBrush, 38.0f, 44.0f, 15.0f, 15.0f);
+
+        // Right eye: wink line or open eye
+        if (wcsstr(filename, L"wink"))
+        {
+            // Wink horizontal rounded line
+            g.DrawLine(&whitePen, 74.0f, 51.5f, 92.0f, 51.5f);
+        }
+        else
+        {
+            g.FillEllipse(&whiteBrush, 75.0f, 44.0f, 15.0f, 15.0f);
+        }
+    }
+
+    SelectObject(hdcMem, hOld);
+    DeleteDC(hdcMem);
+    ReleaseDC(NULL, hdcScreen);
+
+    return hDIB;
 }
 
 static void ExtractJsonString(const char* json, const char* key, WCHAR* outBuf, DWORD maxChars)

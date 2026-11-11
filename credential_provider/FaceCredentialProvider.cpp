@@ -23,8 +23,8 @@ static void LogProvider(const WCHAR* fmt, ...)
 
 static const CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR s_rgFieldDescriptors[] =
 {
-    { FPF_LOGO,           CPFT_TILE_IMAGE,    const_cast<LPWSTR>(L"Face ID") },
-    { FPF_STATUS_TEXT,    CPFT_LARGE_TEXT,    const_cast<LPWSTR>(L"Status") },
+    { FPF_LOGO,           CPFT_TILE_IMAGE,    const_cast<LPWSTR>(L"Windows Hello Face") },
+    { FPF_STATUS_TEXT,    CPFT_LARGE_TEXT,    const_cast<LPWSTR>(L"Windows Hello") },
     { FPF_SUBMIT_BUTTON,  CPFT_SUBMIT_BUTTON, const_cast<LPWSTR>(L"Unlock") }
 };
 
@@ -214,9 +214,11 @@ HRESULT FaceCredentialProvider::GetCredentialCount(DWORD* pdwCount, DWORD* pdwDe
 
     // Provide 1 credential tile
     *pdwCount = 1;
-    // Do NOT hijack default credential so Windows PIN and Password remain fully accessible!
-    *pdwDefault = CREDENTIAL_PROVIDER_NO_DEFAULT;
+    // Default to Windows Hello Face tile so NO PIN box is shown when face is active!
+    *pdwDefault = 0;
+    // Do NOT trigger immediate auto-logon until face verification succeeds
     *pbAutoLogonWithDefault = FALSE;
+    LogProvider(L"GetCredentialCount: count=1, default=0, autoLogon=FALSE");
     return S_OK;
 }
 
