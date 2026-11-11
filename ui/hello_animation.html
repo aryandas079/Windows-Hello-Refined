@@ -2,22 +2,23 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Windows Hello Transparent Animation</title>
+  <title>Windows Hello Official Transparent Animation</title>
+  <!-- jQuery & GSAP (No paid plugins needed) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Segoe+UI:wght@300;400;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Segoe+UI:wght@300;400&display=swap');
 
     * {
       box-sizing: border-box;
+      margin: 0;
+      padding: 0;
     }
 
     html, body {
-      width: 100%;
-      height: 100%;
-      margin: 0;
-      padding: 0;
+      width: 100vw;
+      height: 100vh;
       background: transparent !important;
       background-color: transparent !important;
       overflow: hidden;
@@ -26,7 +27,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+      font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Roboto", sans-serif;
     }
 
     #main-ctr {
@@ -35,64 +36,60 @@
       align-items: center;
       justify-content: center;
       text-align: center;
-      width: 100%;
-      height: 100%;
       background: transparent !important;
+      opacity: 0;
+    }
+
+    svg {
+      width: 180px;
+      height: 147px;
+      overflow: visible;
+      filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.4));
+    }
+
+    /* Transform origin for smile container */
+    #smile-group {
+      transform-origin: 148px 120.5px;
+    }
+
+    /* Eye origins for winking */
+    #eye-right {
+      transform-origin: 187px 121px;
+    }
+
+    #eye-left {
+      transform-origin: 106px 121px;
     }
 
     .hello {
       color: #FFFFFF;
       letter-spacing: 1.5px;
-      font-size: 26px;
-      font-family: 'Segoe UI', Roboto, sans-serif;
+      font-size: 24px;
       font-weight: 300;
-      margin-top: 18px;
-      margin-bottom: 0;
-      text-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+      margin-top: 16px;
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
       opacity: 0;
-      transform: translateY(5px);
-    }
-
-    svg {
-      width: 160px;
-      height: 130px;
-      overflow: visible;
-      filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.35));
-    }
-
-    /* SVG elements */
-    #smile-arc {
-      stroke: #FFFFFF;
-      stroke-width: 24;
-      stroke-linecap: round;
-      fill: none;
-      transform-origin: 148px 120px;
-    }
-
-    .eye {
-      fill: #FFFFFF;
-      transform-origin: center center;
-    }
-
-    #eye-left {
-      transform-origin: 106px 115px;
-    }
-
-    #eye-right {
-      transform-origin: 190px 115px;
     }
   </style>
 </head>
 <body>
 
 <div id="main-ctr">
-  <svg xmlns="http://www.w3.org/2000/svg" width="296" height="240" viewBox="0 0 296 240">
-    <!-- Spinning radar arc that settles into the smile -->
-    <path id="smile-arc" d="M 68 145 C 80 205 216 205 228 145" />
+  <svg xmlns="http://www.w3.org/2000/svg" width="294" height="241" viewBox="0 0 294 241">
+    <g id="group" fill="none" fill-rule="evenodd">
+      <!-- The Official Windows Hello Arc (Rotating from top to bottom) -->
+      <g id="smile-group">
+        <path id="smile" stroke="#FFFFFF" stroke-width="30" stroke-linecap="round"
+              d="M238.843 166c-15.863 34.268-50.554 58.04-90.797 58.04-39.62 0-73.857-23.04-90.046-56.453" />
+      </g>
 
-    <!-- Left and right eye pupils -->
-    <circle id="eye-left" class="eye" cx="106" cy="115" r="18" opacity="0" />
-    <circle id="eye-right" class="eye" cx="190" cy="115" r="18" opacity="0" />
+      <!-- The Official Windows Hello Eyes -->
+      <path id="eye-left" fill="#FFFFFF" opacity="0"
+            d="M106 143c12.15 0 22-9.85 22-22s-9.85-22-22-22c-2.028 0-3.992.274-5.857.788C90.836 102.352 84 110.878 84 121c0 12.15 9.85 22 22 22z"/>
+
+      <path id="eye-right" fill="#FFFFFF" opacity="0"
+            d="M187 143c12.15 0 22-9.85 22-22s-9.85-22-22-22c-3.286 0-6.404.72-9.204 2.012C170.242 104.496 165 112.136 165 121c0 12.15 9.85 22 22 22z"/>
+    </g>
   </svg>
   <h1 class="hello" id="hello-text">Hello, Aryan</h1>
 </div>
@@ -105,78 +102,68 @@
   $(document).ready(function() {
     var mainCtr = $("#main-ctr"),
         hello = $(".hello"),
-        arc = $("#smile-arc"),
-        eyeL = $("#eye-left"),
-        eyeR = $("#eye-right");
+        smileGroup = $("#smile-group"),
+        eyeLeft = $("#eye-left"),
+        eyeRight = $("#eye-right");
 
-    // Master Timeline for authentic Windows Hello face animation
+    // Master Timeline
     var tl = gsap.timeline({
       repeat: -1,
       repeatDelay: 0.6,
       delay: 0.2
     });
 
-    // 1. Initial State: Fade in container
+    // Initial setup:
+    // smileGroup at rotation: 180deg (renders smile-up at top, exactly like Image 1)
+    // Eyes hidden
     tl.set(mainCtr, { opacity: 0 })
-      .set(hello, { opacity: 0, y: 8 })
-      .set(arc, {
-        rotation: 0,
-        scale: 1,
-        attr: { d: "M 68 95 C 80 35 216 35 228 95" } // Top scanning arc
-      })
-      .set([eyeL, eyeR], { opacity: 0, scale: 0.2 })
+      .set(hello, { opacity: 0 })
+      .set(smileGroup, { rotation: 180 }) // 180 deg = top arc (smile-up)
+      .set([eyeLeft, eyeRight], { opacity: 0, scale: 0.3 })
       .to(mainCtr, { duration: 0.3, opacity: 1 });
 
-    // 2. SCANNING PHASE: Arc rotates 900 degrees smoothly
-    tl.to(arc, {
-      duration: 0.35,
-      rotation: -35,
+    // Step 1: Arc rotates slightly backwards then spins 900 degrees smoothly
+    tl.to(smileGroup, {
+      duration: 0.3,
+      rotation: 150, // Slight anticipatory wind-up (-30)
       ease: "power2.in"
     })
-    .to(arc, {
+    .to(smileGroup, {
       duration: 0.95,
-      rotation: 900,
-      ease: "power3.inOut"
-    });
-
-    // 3. SMILING FACE EMERGENCE: Arc transitions to bottom smile and eyes pop in
-    tl.to(arc, {
+      rotation: 900, // 900 deg = 0 deg mod 360 = bottom smile!
+      ease: "circ.inOut"
+    })
+    // Step 2: As the spin finishes, the eyes fade in and pop into place
+    .to([eyeLeft, eyeRight], {
       duration: 0.35,
-      attr: { d: "M 68 145 C 80 205 216 205 228 145" }, // Bottom smile arc
-      rotation: 0,
-      ease: "back.out(1.4)"
-    }, "-=0.25")
-    .to([eyeL, eyeR], {
-      duration: 0.3,
       opacity: 1,
       scale: 1,
-      ease: "back.out(1.7)",
-      stagger: 0.08
-    }, "-=0.2");
-
-    // 4. THE ICONIC WINK: Right eye closes and opens, smile broadens!
-    tl.to(eyeR, {
+      ease: "back.out(1.8)",
+      stagger: 0.06
+    }, "-=0.25")
+    // Step 3: THE WINK! Right eye closes down and opens back up
+    .to(eyeRight, {
       duration: 0.12,
-      scaleY: 0.12,
+      scaleY: 0.15,
+      transformOrigin: "187px 121px",
       ease: "power2.in"
     }, "+=0.15")
-    .to(eyeR, {
+    .to(eyeRight, {
       duration: 0.16,
-      scaleY: 1,
+      scaleY: 1.0,
+      transformOrigin: "187px 121px",
       ease: "back.out(2)"
     })
-    // 5. GREETING TEXT FADE-IN
+    // Step 4: Greeting text appears
     .to(hello, {
       duration: 0.35,
       opacity: 1,
-      y: 0,
       ease: "power2.out"
-    }, "-=0.25");
-
-    // 6. Hold on screen, then fade out smoothly
-    tl.to(mainCtr, {
+    }, "-=0.2")
+    // Step 5: Hold, then fade out
+    .to(mainCtr, {
       delay: 1.6,
-      duration: 0.5,
+      duration: 0.6,
       opacity: 0,
       ease: "power2.in"
     });

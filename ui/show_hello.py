@@ -11,7 +11,7 @@ def show_transparent_hello(username="Aryan"):
 
     html_content = html_content.replace("Hello, Aryan", f"Hello, {username}")
 
-    w, h = 380, 260
+    w, h = 380, 280
     window = webview.create_window(
         title="Windows Hello",
         html=html_content,
