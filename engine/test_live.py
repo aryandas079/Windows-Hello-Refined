@@ -77,9 +77,9 @@ def run_live_test(camera_index=0):
                         status_color = (0, 215, 255)  # Bright Gold / Yellow
                         score_text = f"Liveness: {live_score * 100:.1f}% | Waiting for genuine blink..."
                     else:
-                        status_text = f"SPOOF DETECTED: {live_msg}"
+                        status_text = "SPOOF DETECTED: PHONE / SCREEN / PHOTO"
                         status_color = (0, 0, 255)  # Red
-                        score_text = f"Liveness Score: {live_score * 100:.1f}% | Anti-Spoof: REJECTED"
+                        score_text = f"Liveness: {live_score * 100:.1f}% | {live_msg}"
                     cv2.rectangle(frame, (x, y), (x + fw, y + fh), status_color, 2)
                 else:
                     query_feature = engine.extract_features(enhanced, face)
