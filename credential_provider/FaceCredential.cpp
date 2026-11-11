@@ -9,6 +9,7 @@ FaceCredential::FaceCredential() :
     m_cpus(CPUS_INVALID),
     m_pProvider(nullptr),
     m_pEvents(nullptr),
+    m_pszUserSid(nullptr),
     m_bVerified(FALSE),
     m_hThread(nullptr),
     m_bStopThread(FALSE)
@@ -26,6 +27,11 @@ FaceCredential::~FaceCredential()
         CloseHandle(m_hThread);
         m_hThread = nullptr;
     }
+    if (m_pszUserSid)
+    {
+        CoTaskMemFree(m_pszUserSid);
+        m_pszUserSid = nullptr;
+    }
     if (m_pEvents)
     {
         m_pEvents->Release();
@@ -34,10 +40,14 @@ FaceCredential::~FaceCredential()
     DeleteCriticalSection(&m_cs);
 }
 
-void FaceCredential::Initialize(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, FaceCredentialProvider* pProvider)
+void FaceCredential::Initialize(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, FaceCredentialProvider* pProvider, LPCWSTR pszUserSid)
 {
     m_cpus = cpus;
     m_pProvider = pProvider;
+    if (pszUserSid)
+    {
+        SHStrDupW(pszUserSid, &m_pszUserSid);
+    }
 }
 
 HRESULT FaceCredential::QueryInterface(REFIID riid, void** ppv)
@@ -90,12 +100,16 @@ HRESULT FaceCredential::Advise(ICredentialProviderCredentialEvents* pcpce)
         m_pEvents->AddRef();
     }
     LeaveCriticalSection(&m_cs);
+
+    // Auto-start scanning immediately when screen locks or wakes!
+    StartVerification();
     return S_OK;
 }
 
 HRESULT FaceCredential::UnAdvise()
 {
     EnterCriticalSection(&m_cs);
+    m_bStopThread = TRUE;
     if (m_pEvents)
     {
         m_pEvents->Release();
@@ -103,6 +117,15 @@ HRESULT FaceCredential::UnAdvise()
     }
     LeaveCriticalSection(&m_cs);
     return S_OK;
+}
+
+void FaceCredential::StartVerification()
+{
+    if (!m_hThread && !m_bVerified)
+    {
+        m_bStopThread = FALSE;
+        m_hThread = CreateThread(NULL, 0, VerificationThread, this, 0, NULL);
+    }
 }
 
 DWORD WINAPI FaceCredential::VerificationThread(LPVOID lpParam)
@@ -118,7 +141,7 @@ void FaceCredential::DoVerification()
 
     HANDLE hPipe = INVALID_HANDLE_VALUE;
     int retry = 0;
-    while (!m_bStopThread && retry < 10)
+    while (!m_bStopThread && retry < 15)
     {
         hPipe = CreateFileW(
             pipeName,
@@ -132,14 +155,14 @@ void FaceCredential::DoVerification()
         if (hPipe != INVALID_HANDLE_VALUE)
             break;
 
-        Sleep(200);
+        Sleep(150);
         retry++;
     }
 
     if (hPipe == INVALID_HANDLE_VALUE)
     {
         EnterCriticalSection(&m_cs);
-        StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Windows Hello service unreachable");
+        StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Windows Hello service unreachable. Use PIN/Password.");
         LeaveCriticalSection(&m_cs);
         if (m_pEvents)
         {
@@ -180,7 +203,7 @@ void FaceCredential::DoVerification()
         else
         {
             EnterCriticalSection(&m_cs);
-            StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Face not recognized. Click to retry.");
+            StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), L"Looking for you... Click to retry or choose PIN/Password.");
             LeaveCriticalSection(&m_cs);
             if (m_pEvents)
             {
@@ -194,18 +217,9 @@ void FaceCredential::DoVerification()
 
 HRESULT FaceCredential::SetSelected(BOOL* pbAutoLogon)
 {
-    if (pbAutoLogon) *pbAutoLogon = FALSE;
-
-    m_bStopThread = FALSE;
-    m_bVerified = FALSE;
-
-    if (m_hThread)
-    {
-        CloseHandle(m_hThread);
-        m_hThread = nullptr;
-    }
-
-    m_hThread = CreateThread(NULL, 0, VerificationThread, this, 0, NULL);
+    // Enable auto logon when verified
+    if (pbAutoLogon) *pbAutoLogon = m_bVerified;
+    StartVerification();
     return S_OK;
 }
 
@@ -214,7 +228,7 @@ HRESULT FaceCredential::SetDeselected()
     m_bStopThread = TRUE;
     if (m_hThread)
     {
-        WaitForSingleObject(m_hThread, 500);
+        WaitForSingleObject(m_hThread, 300);
         CloseHandle(m_hThread);
         m_hThread = nullptr;
     }
@@ -324,6 +338,10 @@ HRESULT FaceCredential::ReportResult(NTSTATUS ntsStatus, NTSTATUS ntsSubstatus,
 HRESULT FaceCredential::GetUserSid(LPWSTR* ppszSid)
 {
     if (!ppszSid) return E_POINTER;
+    if (m_pszUserSid)
+    {
+        return SHStrDupW(m_pszUserSid, ppszSid);
+    }
     *ppszSid = nullptr;
     return S_OK;
 }

@@ -1,0 +1,24 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# User Data & DPAPI Biometrics (Never commit biometric data)
+data/
+*.enc
+
+# Build artifacts
+*.obj
+*.exp
+*.lib
+*.log
+*.pdb
+*.tlog
+*.idb
+
+# Windows
+Thumbs.db
+Desktop.ini
+Windows Hello Refined/

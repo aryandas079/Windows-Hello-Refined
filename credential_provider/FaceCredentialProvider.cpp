@@ -5,7 +5,7 @@
 
 static const CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR s_rgFieldDescriptors[] =
 {
-    { FPF_LOGO,           CPFT_TILE_IMAGE,    const_cast<LPWSTR>(L"Logo") },
+    { FPF_LOGO,           CPFT_TILE_IMAGE,    const_cast<LPWSTR>(L"Face ID") },
     { FPF_STATUS_TEXT,    CPFT_LARGE_TEXT,    const_cast<LPWSTR>(L"Status") },
     { FPF_SUBMIT_BUTTON,  CPFT_SUBMIT_BUTTON, const_cast<LPWSTR>(L"Unlock") }
 };
@@ -15,12 +15,15 @@ FaceCredentialProvider::FaceCredentialProvider() :
     m_cpus(CPUS_INVALID),
     m_pEvents(nullptr),
     m_upAdviseContext(0),
-    m_pCredential(nullptr)
+    m_pCredential(nullptr),
+    m_pszUserSid(nullptr),
+    m_bHasUsers(FALSE)
 {
 }
 
 FaceCredentialProvider::~FaceCredentialProvider()
 {
+    CleanUpUsers();
     if (m_pCredential)
     {
         m_pCredential->Release();
@@ -33,6 +36,15 @@ FaceCredentialProvider::~FaceCredentialProvider()
     }
 }
 
+void FaceCredentialProvider::CleanUpUsers()
+{
+    if (m_pszUserSid)
+    {
+        CoTaskMemFree(m_pszUserSid);
+        m_pszUserSid = nullptr;
+    }
+}
+
 HRESULT FaceCredentialProvider::QueryInterface(REFIID riid, void** ppv)
 {
     if (!ppv) return E_POINTER;
@@ -40,6 +52,12 @@ HRESULT FaceCredentialProvider::QueryInterface(REFIID riid, void** ppv)
     if (riid == IID_IUnknown || riid == IID_ICredentialProvider)
     {
         *ppv = static_cast<ICredentialProvider*>(this);
+        AddRef();
+        return S_OK;
+    }
+    else if (riid == IID_ICredentialProviderSetUserArray)
+    {
+        *ppv = static_cast<ICredentialProviderSetUserArray*>(this);
         AddRef();
         return S_OK;
     }
@@ -103,6 +121,42 @@ HRESULT FaceCredentialProvider::UnAdvise()
     return S_OK;
 }
 
+HRESULT FaceCredentialProvider::SetUserArray(ICredentialProviderUserArray* users)
+{
+    CleanUpUsers();
+    m_bHasUsers = FALSE;
+
+    if (!users) return S_OK;
+
+    DWORD count = 0;
+    if (SUCCEEDED(users->GetCount(&count)) && count > 0)
+    {
+        // Obtain currently locked/selected user
+        for (DWORD i = 0; i < count; i++)
+        {
+            ICredentialProviderUser* pUser = nullptr;
+            if (SUCCEEDED(users->GetAt(i, &pUser)))
+            {
+                LPWSTR pszSid = nullptr;
+                if (SUCCEEDED(pUser->GetSid(&pszSid)) && pszSid)
+                {
+                    // Cache the user's SID so this tile attaches to this user under "Sign-in options"
+                    if (!m_pszUserSid)
+                    {
+                        SHStrDupW(pszSid, &m_pszUserSid);
+                        m_bHasUsers = TRUE;
+                    }
+                    CoTaskMemFree(pszSid);
+                }
+                pUser->Release();
+                if (m_bHasUsers) break;
+            }
+        }
+    }
+
+    return S_OK;
+}
+
 HRESULT FaceCredentialProvider::GetFieldDescriptorCount(DWORD* pdwCount)
 {
     if (!pdwCount) return E_POINTER;
@@ -135,9 +189,11 @@ HRESULT FaceCredentialProvider::GetCredentialCount(DWORD* pdwCount, DWORD* pdwDe
 {
     if (!pdwCount || !pdwDefault || !pbAutoLogonWithDefault) return E_POINTER;
 
+    // Provide 1 credential tile
     *pdwCount = 1;
     *pdwDefault = 0;
-    *pbAutoLogonWithDefault = FALSE;
+    // Auto-select on screen wake without needing user to click!
+    *pbAutoLogonWithDefault = TRUE;
     return S_OK;
 }
 
@@ -149,7 +205,7 @@ HRESULT FaceCredentialProvider::GetCredentialAt(DWORD dwIndex, ICredentialProvid
     if (!m_pCredential)
     {
         m_pCredential = new FaceCredential();
-        m_pCredential->Initialize(m_cpus, this);
+        m_pCredential->Initialize(m_cpus, this, m_pszUserSid);
     }
 
     *ppcpc = m_pCredential;

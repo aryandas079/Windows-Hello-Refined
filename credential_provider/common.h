@@ -11,7 +11,6 @@
 DEFINE_GUID(CLSID_FaceCredentialProvider,
     0xc85b5f30, 0x5b1d, 0x4a4a, 0x8a, 0x87, 0x3e, 0x3f, 0x45, 0xe4, 0x12, 0xa8);
 
-// Fields shown on LogonUI
 enum FACE_PROVIDER_FIELDS
 {
     FPF_LOGO = 0,

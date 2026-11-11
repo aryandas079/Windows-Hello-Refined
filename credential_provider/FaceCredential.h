@@ -42,16 +42,18 @@ public:
     // ICredentialProviderCredential2
     IFACEMETHODIMP GetUserSid(LPWSTR* ppszSid);
 
-    void Initialize(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, FaceCredentialProvider* pProvider);
+    void Initialize(CREDENTIAL_PROVIDER_USAGE_SCENARIO cpus, FaceCredentialProvider* pProvider, LPCWSTR pszUserSid);
 
 private:
     static DWORD WINAPI VerificationThread(LPVOID lpParam);
     void DoVerification();
+    void StartVerification();
 
     long m_cRef;
     CREDENTIAL_PROVIDER_USAGE_SCENARIO m_cpus;
     FaceCredentialProvider* m_pProvider;
     ICredentialProviderCredentialEvents* m_pEvents;
+    LPWSTR m_pszUserSid;
     WCHAR m_statusText[256];
     BOOL m_bVerified;
     HANDLE m_hThread;

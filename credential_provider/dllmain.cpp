@@ -82,7 +82,6 @@ STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv)
 
 STDAPI DllRegisterServer()
 {
-    // Register COM CLSID and Windows Credential Provider key
     HKEY hKey;
     const WCHAR* clsidStr = L"{C85B5F30-5B1D-4A4A-8A87-3E3F45E412A8}";
     WCHAR path[MAX_PATH];
@@ -99,7 +98,6 @@ STDAPI DllRegisterServer()
         RegCloseKey(hKey);
     }
 
-    // Register with Windows Credential Providers
     StringCchPrintfW(subKey, ARRAYSIZE(subKey), L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\%s", clsidStr);
     if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, subKey, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS)
     {

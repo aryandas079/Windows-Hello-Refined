@@ -3,8 +3,8 @@ setlocal
 
 call "D:\Visual Studio\VC\Auxiliary\Build\vcvars64.bat"
 
-echo Compiling FaceCredentialProvider.dll (x64)...
-cd /d "%~dp0"
+echo Compiling Modern V2 FaceCredentialProvider.dll (x64)...
+cd /d "D:\Projects_New\Windows Hello Refined\credential_provider"
 
 cl.exe /O2 /Oi /EHsc /std:c++17 /W3 /D_USRDLL /D_WINDLL /DUNICODE /D_UNICODE ^
     FaceCredentialProvider.cpp FaceCredential.cpp dllmain.cpp ^
