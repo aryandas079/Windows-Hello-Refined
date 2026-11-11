@@ -127,7 +127,10 @@ Options:
   5. Start Walk-Away Auto-Lock (Presence Guard)
   6. Register Native Windows Lock Screen Credential Provider
   7. Unregister Credential Provider
-  8. Preview Transparent Windows Hello HTML/SVG Animation
+  8. Install Automatic Boot/Restart Startup Service (Run on Power-On)
+  9. Remove Boot/Restart Startup Service
+ 10. Clean Lock Screen (Remove News, Fun Facts, Tips & Widgets)
+ 11. Preview Transparent Windows Hello HTML/SVG Animation
   0. Exit
 ```
 
@@ -247,9 +250,12 @@ Windows Hello Refined/
 ├── service/                 # Background system services
 │   ├── face_service.py      # Named pipe IPC biometric daemon
 │   └── session_guard.py     # Walk-away auto-lock presence monitor
+├── clean_lockscreen.py      # Lock screen de-clutter utility (removes trivia/widgets)
 ├── manage.py                # Unified interactive CLI manager
 ├── save_pin.py              # DPAPI Windows Hello PIN storage tool
 ├── setup_face.py            # Graphical 4-angle enrollment application
+├── install_startup.bat      # Boot-time service installer (schtasks)
+├── uninstall_startup.bat    # Boot-time service uninstaller
 └── requirements.txt         # Python package dependencies
 ```
 

@@ -43,6 +43,11 @@ if %errorLevel% equ 0 (
     echo   2. Immediately after restarting Windows.
     echo   3. On-demand if triggered by the lock screen.
     echo =======================================================
+    echo.
+    set /p "CLEAN_CHOICE=Do you want to remove lock screen news, fun facts, tips, and widgets for a clean look? [Y/N]: "
+    if /i "%CLEAN_CHOICE%"=="Y" (
+        "%PROJ_DIR%\.venv\Scripts\python.exe" "%PROJ_DIR%\clean_lockscreen.py"
+    )
 ) else (
     echo.
     echo [ERROR] Failed to register task with schtasks. Error code: %errorLevel%

@@ -219,6 +219,16 @@ def main():
     except Exception as e:
         print(f"[!] Error starting service: {e}")
 
+    # ── Optional: Clean lock screen suggestions & widgets ────────────
+    print("\n" + "=" * 68)
+    clean_prompt = input("Do you want to remove lock screen news, fun facts, tips, and widgets for a clean look? [Y/n]: ").strip().lower()
+    if clean_prompt != 'n':
+        try:
+            from clean_lockscreen import clean_lock_screen
+            clean_lock_screen()
+        except Exception as e:
+            print(f"[!] Note: {e}")
+
     print("\n" + "=" * 65)
     print("   WINDOWS HELLO REFINED IS READY!")
     print("=" * 65)
