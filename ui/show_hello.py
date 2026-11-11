@@ -38,8 +38,7 @@ def show_transparent_hello(username="Aryan"):
         frameless=True,
         transparent=True,
         on_top=True,
-        easy_drag=False,
-        background_color="#00000000"  # fully transparent
+        easy_drag=False
     )
 
     # Inject username into the page once it loads
