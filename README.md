@@ -169,26 +169,28 @@ You should see:
 
 ---
 
-## Automatic Startup on Windows Boot
+## Automatic Startup on Boot & Restart
 
-To have the Face ID daemon run automatically in the background whenever you log in:
+Windows Hello Refined works immediately upon powering on the computer from shutdown or after a system restart through a two-layer architecture:
 
-### Option A: Create a Windows Scheduled Task (Recommended)
-Open PowerShell **as Administrator** and run:
+### Layer 1: In-Process On-Demand Auto-Start (Automatic Fail-Safe)
+The native Credential Provider (`FaceCredentialProvider.dll`) automatically detects whether the background biometric daemon is active. If the computer has just booted up and the pipe is not yet running, it spawns `pythonw.exe service\face_service.py` directly from the lock screen and waits for the pipe to initialize before beginning face verification.
+
+### Layer 2: Pre-Warmed Boot Service (Recommended for Fastest Unlock)
+To have the face recognition engine already warmed up in memory before you even sit in front of the screen:
+
+**Method 1: Right-Click Installer**
+1. Right-click `install_startup.bat` in the project root.
+2. Select **Run as administrator**.
+
+**Method 2: Interactive Manager**
+Run `.\.venv\Scripts\python.exe manage.py` and choose **Option 8**.
+
+**Method 3: PowerShell (Administrator)**
 ```powershell
-$action = New-ScheduledTaskAction -Execute "$PWD\.venv\Scripts\pythonw.exe" -Argument "service\face_service.py" -WorkingDirectory "$PWD"
-$trigger = New-ScheduledTaskTrigger -AtLogOn
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0
-Register-ScheduledTask -TaskName "WindowsHelloRefinedDaemon" -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest
+schtasks /create /tn "WindowsHelloRefinedDaemon" /tr "`"$PWD\.venv\Scripts\pythonw.exe`" `"$PWD\service\face_service.py`"" /sc onstart /ru "SYSTEM" /rl highest /f
 ```
-*(Using `pythonw.exe` runs the service completely silently in the background with no console window.)*
-
-### Option B: Add to Startup Folder
-Press <kbd>Win</kbd> + <kbd>R</kbd>, type `shell:startup`, and create a shortcut pointing to:
-```
-Target: "D:\Projects_New\Windows Hello Refined\.venv\Scripts\pythonw.exe" "D:\Projects_New\Windows Hello Refined\service\face_service.py"
-Start in: "D:\Projects_New\Windows Hello Refined"
-```
+*(To remove the boot task at any time, run `uninstall_startup.bat` or select Option 9 in `manage.py`.)*
 
 ---
 

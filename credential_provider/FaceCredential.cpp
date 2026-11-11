@@ -648,8 +648,84 @@ static void SimulatePinInput(LPCWSTR pszPin)
     LogMsg(L"SimulatePinInput: PIN sent successfully.");
 }
 
+static void EnsureDaemonRunning()
+{
+    const WCHAR* pipeName = L"\\\\.\\pipe\\WindowsHelloRefinedPipe";
+    if (WaitNamedPipeW(pipeName, 50))
+    {
+        LogMsg(L"EnsureDaemonRunning: face service pipe already active.");
+        return;
+    }
+
+    LogMsg(L"EnsureDaemonRunning: pipe not detected, auto-launching face_service daemon for startup/reboot...");
+
+    WCHAR dllPath[MAX_PATH] = {0};
+    GetModuleFileNameW(g_hInst, dllPath, ARRAYSIZE(dllPath));
+    PathRemoveFileSpecW(dllPath); // remove FaceCredentialProvider.dll -> credential_provider
+    PathRemoveFileSpecW(dllPath); // remove credential_provider -> Project Root
+
+    WCHAR pythonExe[MAX_PATH] = {0};
+    StringCchPrintfW(pythonExe, ARRAYSIZE(pythonExe), L"%s\\.venv\\Scripts\\pythonw.exe", dllPath);
+
+    WCHAR serviceScript[MAX_PATH] = {0};
+    StringCchPrintfW(serviceScript, ARRAYSIZE(serviceScript), L"%s\\service\\face_service.py", dllPath);
+
+    if (!PathFileExistsW(pythonExe) || !PathFileExistsW(serviceScript))
+    {
+        LogMsg(L"EnsureDaemonRunning: executable not found at %s or %s", pythonExe, serviceScript);
+        return;
+    }
+
+    WCHAR cmdLine[MAX_PATH * 3] = {0};
+    StringCchPrintfW(cmdLine, ARRAYSIZE(cmdLine), L"\"%s\" \"%s\"", pythonExe, serviceScript);
+
+    STARTUPINFOW si = {0};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+
+    PROCESS_INFORMATION pi = {0};
+
+    BOOL bCreated = CreateProcessW(
+        pythonExe,
+        cmdLine,
+        NULL,
+        NULL,
+        FALSE,
+        CREATE_NO_WINDOW | DETACHED_PROCESS,
+        NULL,
+        dllPath, // Set working directory to project root
+        &si,
+        &pi
+    );
+
+    if (bCreated)
+    {
+        LogMsg(L"EnsureDaemonRunning: spawned background daemon PID=%lu. Waiting for pipe initialization...", pi.dwProcessId);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+
+        for (int i = 0; i < 35; i++)
+        {
+            if (WaitNamedPipeW(pipeName, 100))
+            {
+                LogMsg(L"EnsureDaemonRunning: daemon pipe became ready in %d ms!", (i + 1) * 100);
+                return;
+            }
+            Sleep(100);
+        }
+        LogMsg(L"EnsureDaemonRunning: timed out waiting for spawned pipe.");
+    }
+    else
+    {
+        LogMsg(L"EnsureDaemonRunning: CreateProcessW failed: %lu", GetLastError());
+    }
+}
+
 void FaceCredential::DoVerification()
 {
+    EnsureDaemonRunning();
+
     const WCHAR* pipeName = L"\\\\.\\pipe\\WindowsHelloRefinedPipe";
     LogMsg(L"DoVerification connecting to pipe: %s", pipeName);
 

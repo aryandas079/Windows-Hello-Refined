@@ -6,10 +6,13 @@ PROFILE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 PROFILE_FILE = os.path.join(PROFILE_DIR, "face_profile.enc")
 CREDS_FILE = os.path.join(PROFILE_DIR, "credentials.enc")
 
+CRYPTPROTECT_LOCAL_MACHINE = 0x4
+
 def save_profile(username, embeddings):
     """
     Encrypts and saves the enrolled biometric embeddings using Windows DPAPI.
-    Only the current Windows user / system can decrypt this data.
+    Uses CRYPTPROTECT_LOCAL_MACHINE (0x4) so both the user and system-level
+    lock-screen components (LogonUI / reboot startup) can decrypt on this PC.
     """
     os.makedirs(PROFILE_DIR, exist_ok=True)
     payload = {
@@ -24,7 +27,7 @@ def save_profile(username, embeddings):
         None,
         None,
         None,
-        0
+        CRYPTPROTECT_LOCAL_MACHINE
     )
     with open(PROFILE_FILE, "wb") as f:
         f.write(encrypted_blob)
@@ -56,7 +59,8 @@ def load_profile():
 def save_credentials(username, password="", domain="", pin=""):
     """
     Encrypts user logon credentials (PIN or Password) using Windows DPAPI.
-    Enables automatic zero-touch workstation unlock on successful face match.
+    Uses CRYPTPROTECT_LOCAL_MACHINE (0x4) so both the user and system-level
+    lock-screen components (LogonUI / reboot startup) can decrypt on this PC.
     """
     os.makedirs(PROFILE_DIR, exist_ok=True)
     payload = {
@@ -72,7 +76,7 @@ def save_credentials(username, password="", domain="", pin=""):
         None,
         None,
         None,
-        0
+        CRYPTPROTECT_LOCAL_MACHINE
     )
     with open(CREDS_FILE, "wb") as f:
         f.write(encrypted_blob)

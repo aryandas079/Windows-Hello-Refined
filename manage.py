@@ -20,10 +20,12 @@ def main():
     print("  5. Start Walk-Away Auto-Lock (Presence Guard)")
     print("  6. Register Native Windows Lock Screen Credential Provider")
     print("  7. Unregister Credential Provider")
-    print("  8. Preview Transparent Windows Hello HTML/SVG Animation")
+    print("  8. Install Automatic Boot/Restart Startup Service (Run on Power-On)")
+    print("  9. Remove Boot/Restart Startup Service")
+    print(" 10. Preview Transparent Windows Hello HTML/SVG Animation")
     print("  0. Exit")
 
-    choice = input("\nSelect an option [0-8]: ").strip()
+    choice = input("\nSelect an option [0-10]: ").strip()
 
     if choice == "1":
         subprocess.run([python_exe, "setup_face.py"])
@@ -45,6 +47,13 @@ def main():
         subprocess.run(["regsvr32", "/u", "/s", dll_path])
         print("[-] Credential Provider unregistered.")
     elif choice == "8":
+        bat_path = os.path.abspath("install_startup.bat")
+        print(f"Launching installer: {bat_path}")
+        subprocess.run(["cmd", "/c", bat_path])
+    elif choice == "9":
+        bat_path = os.path.abspath("uninstall_startup.bat")
+        subprocess.run(["cmd", "/c", bat_path])
+    elif choice == "10":
         subprocess.run([python_exe, "ui/show_hello.py"])
     elif choice == "0":
         print("Exiting.")
