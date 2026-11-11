@@ -103,12 +103,25 @@ static HRESULT PackLogonCredentials(
     }
 
     WCHAR szFullUser[512] = {0};
-    if (pszDomain && wcslen(pszDomain) > 0 && _wcsicmp(pszDomain, L".") != 0)
+    WCHAR computerName[MAX_COMPUTERNAME_LENGTH + 1] = {0};
+    DWORD cchComp = ARRAYSIZE(computerName);
+    GetComputerNameW(computerName, &cchComp);
+
+    if (wcsstr(pszUsername, L"@") != NULL)
     {
+        // Email / Microsoft Account format (e.g. aryandas079@outlook.com)
+        StringCchCopyW(szFullUser, ARRAYSIZE(szFullUser), pszUsername);
+    }
+    else if (pszDomain && wcslen(pszDomain) > 0 &&
+             _wcsicmp(pszDomain, L".") != 0 &&
+             _wcsicmp(pszDomain, computerName) != 0)
+    {
+        // Actual domain (not local computer name)
         StringCchPrintfW(szFullUser, ARRAYSIZE(szFullUser), L"%s\\%s", pszDomain, pszUsername);
     }
     else
     {
+        // Local username without domain prefix
         StringCchCopyW(szFullUser, ARRAYSIZE(szFullUser), pszUsername);
     }
 
