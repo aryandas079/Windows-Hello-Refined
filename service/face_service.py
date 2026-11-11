@@ -106,6 +106,7 @@ class FaceDaemon:
 
                 start_time = time.time()
                 frames_tested = 0
+                consecutive_verified = 0
                 self.engine.reset_blink_history()
 
                 while time.time() - start_time < timeout_sec:
@@ -125,26 +126,31 @@ class FaceDaemon:
                         feature = self.engine.extract_features(enhanced, face)
                         is_match, similarity = self.engine.match_face(feature, enrolled)
 
-                        log_service(f"Frame {frames_tested}: live={is_live} ({live_msg}, score={lscore:.2f}), match={is_match} (sim={similarity:.3f})")
+                        log_service(f"Frame {frames_tested}: live={is_live} ({live_msg}, score={lscore:.2f}), match={is_match} (sim={similarity:.3f}, cons={consecutive_verified})")
 
                         # Verified genuine match: requires both biometric match AND anti-spoof liveness
+                        # across at least 3 consecutive frames to eliminate any single-frame glitch bypass!
                         if is_match and is_live:
-                            log_service(f"Match verified! User: {username}, Similarity: {similarity:.2f}, Liveness: {lscore:.2f}")
-                            creds = load_credentials()
-                            resp = {
-                                "status": "verified",
-                                "username": username,
-                                "confidence": round(similarity * 100, 1),
-                                "message": f"Welcome back, {username}!"
-                            }
-                            if creds:
-                                if creds.get("pin"):
-                                    resp["pin"] = creds["pin"]
-                                if creds.get("password"):
-                                    resp["password"] = creds["password"]
-                                if creds.get("domain"):
-                                    resp["domain"] = creds["domain"]
-                            return resp
+                            consecutive_verified += 1
+                            if consecutive_verified >= 3:
+                                log_service(f"Match verified across {consecutive_verified} consecutive frames! User: {username}, Similarity: {similarity:.2f}, Liveness: {lscore:.2f}")
+                                creds = load_credentials()
+                                resp = {
+                                    "status": "verified",
+                                    "username": username,
+                                    "confidence": round(similarity * 100, 1),
+                                    "message": f"Welcome back, {username}!"
+                                }
+                                if creds:
+                                    if creds.get("pin"):
+                                        resp["pin"] = creds["pin"]
+                                    if creds.get("password"):
+                                        resp["password"] = creds["password"]
+                                    if creds.get("domain"):
+                                        resp["domain"] = creds["domain"]
+                                return resp
+                        else:
+                            consecutive_verified = 0
 
                     time.sleep(0.005)
 

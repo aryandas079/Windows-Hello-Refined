@@ -171,6 +171,7 @@ class FaceEngine:
         self._blendshape_history = deque(maxlen=25)
         self._iris_history = deque(maxlen=25)
         self._geom_history = deque(maxlen=25)
+        self._spoof_cooldown = 0
 
     # ------------------------------------------------------------------
     # Low-light preprocessing
@@ -375,8 +376,15 @@ class FaceEngine:
         face_roi = frame[y1:y2, x1:x2]
         gray_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
 
+        # Check spoof cooldown penalty from previous spoof frames
+        if self._spoof_cooldown > 0:
+            self._spoof_cooldown -= 1
+            return False, 0.05, "Digital screen / phone spoof cooldown active (spoof detected)"
+
         # Layer 0: Screen bezel / mobile phone chassis detection
         if self.check_screen_bezel(frame, face, enhanced=enhanced):
+            self._spoof_cooldown = 20
+            self.reset_blink_history()
             return False, 0.05, "Digital screen / phone bezel detected (phone spoof)"
 
         # Layer 1: Laplacian texture frequency & screen pixel raster bounds
@@ -384,11 +392,15 @@ class FaceEngine:
         if lap_var < 15.0:
             return False, 0.10, "Extreme blur or flat surface detected"
         if lap_var > 420.0:
+            self._spoof_cooldown = 20
+            self.reset_blink_history()
             return False, 0.08, "Digital screen subpixel raster / moire detected (phone spoof)"
 
         # Layer 2: 2D FFT periodic subpixel frequency check (detects OLED/LCD screen grids)
         is_raster, r_ratio = self.check_screen_frequency(gray_roi)
         if is_raster:
+            self._spoof_cooldown = 20
+            self.reset_blink_history()
             return False, 0.08, "Display subpixel raster grid detected (screen spoof)"
 
         # Layer 3: YCrCb color chrominance distribution & display gamut
@@ -399,11 +411,15 @@ class FaceEngine:
         if cr_std < 0.8 or cb_std < 0.8:
             return False, 0.10, "Abnormal color compression (monochrome or cheap print)"
         if cr_std > 26.0 or cb_std > 21.0:
+            self._spoof_cooldown = 20
+            self.reset_blink_history()
             return False, 0.08, "Unnatural digital screen saturation / display gamut detected (phone spoof)"
 
         # Layer 4: Specular highlight on screen glass (flat glass mirror reflection)
         specular_count = int(np.sum(gray_roi > 235))
         if specular_count > 55:
+            self._spoof_cooldown = 20
+            self.reset_blink_history()
             return False, 0.08, "Flat screen glass reflection detected (phone spoof)"
 
         # Layer 5: Biological hemoglobin spectral reflectance (B/R absorption ratio)
@@ -478,10 +494,10 @@ class FaceEngine:
             geom_std = float(np.std(self._geom_history)) if len(self._geom_history) >= 3 else 0.0
 
             is_blink = (ear_span >= 0.060 and ear_min < 0.20 and ear_max > 0.24) or (bs_span >= 0.30)
-            is_ocular = (iris_span >= 0.0030)
-            is_tremor = (ear_span >= 0.0045 or ear_std >= 0.0020)
-            is_expression = (bs_span >= 0.012)
-            is_parallax = (geom_std >= 0.0030)
+            is_ocular = (iris_span >= 0.0090)
+            is_tremor = (ear_span >= 0.0120 or ear_std >= 0.0040)
+            is_expression = (bs_span >= 0.030)
+            is_parallax = (geom_std >= 0.0050)
 
             if is_blink:
                 dynamic_score = 1.0
