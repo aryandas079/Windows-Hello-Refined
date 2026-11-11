@@ -33,8 +33,8 @@ static void LogMsg(const WCHAR* fmt, ...)
     }
 }
 
-static void SendKey(WORD vk, bool bExtended = false);
 static bool IsCredUIDialogOpen();
+static void SimulatePinInput(LPCWSTR pszPin, bool bIsCredUI = false);
 
 static LPWSTR QueryActiveSessionUserSid()
 {
@@ -313,15 +313,6 @@ void FaceCredential::StartVerification()
         m_bStopThread = FALSE;
         LogMsg(L"Starting verification thread...");
         m_overlay.Show(m_username, (int)m_cpus);
-
-        bool bIsCredUI = (m_cpus == CPUS_CREDUI || (int)m_cpus == 3 || (int)m_cpus == 4 || IsCredUIDialogOpen());
-        if (!bIsCredUI)
-        {
-            // Pre-dismiss lock screen curtain with Spacebar so LogonUI is ready immediately
-            LogMsg(L"StartVerification: pre-dismissing lock screen curtain with Spacebar...");
-            SendKey(VK_SPACE);
-        }
-
         m_hThread = CreateThread(NULL, 0, VerificationThread, this, 0, NULL);
     }
     LeaveCriticalSection(&m_cs);
@@ -591,7 +582,7 @@ static void ExtractJsonString(const char* json, const char* key, WCHAR* outBuf, 
     MultiByteToWideChar(CP_UTF8, 0, val, -1, outBuf, maxChars);
 }
 
-static void SendKey(WORD vk, bool bExtended)
+static void FastSendKey(WORD vk, bool bExtended = false)
 {
     INPUT inputs[2] = {0};
     inputs[0].type = INPUT_KEYBOARD;
@@ -607,12 +598,18 @@ static void SendKey(WORD vk, bool bExtended)
     UINT sent = SendInput(2, inputs, sizeof(INPUT));
     if (sent != 2)
     {
-        LogMsg(L"SendKey(0x%04X) SendInput failed! sent=%u, err=%lu", vk, sent, GetLastError());
+        DWORD err = GetLastError();
+        LogMsg(L"FastSendKey(0x%04X) SendInput failed (sent=%u, err=%lu), using keybd_event fallback", vk, sent, err);
+        BYTE scan = (BYTE)MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
+        DWORD flags = bExtended ? KEYEVENTF_EXTENDEDKEY : 0;
+        keybd_event((BYTE)vk, scan, flags, 0);
+        Sleep(2);
+        keybd_event((BYTE)vk, scan, flags | KEYEVENTF_KEYUP, 0);
     }
     Sleep(2);
 }
 
-static void SendUnicodeChar(WCHAR ch)
+static void FastSendChar(WCHAR ch)
 {
     INPUT inputs[2] = {0};
     inputs[0].type = INPUT_KEYBOARD;
@@ -628,7 +625,37 @@ static void SendUnicodeChar(WCHAR ch)
     UINT sent = SendInput(2, inputs, sizeof(INPUT));
     if (sent != 2)
     {
-        LogMsg(L"SendUnicodeChar('%c') SendInput failed! sent=%u, err=%lu", ch, sent, GetLastError());
+        DWORD err = GetLastError();
+        LogMsg(L"FastSendChar('%c') SendInput failed (sent=%u, err=%lu), using keybd_event fallback", ch, sent, err);
+
+        SHORT vkState = VkKeyScanW(ch);
+        if (vkState != -1)
+        {
+            BYTE vk = LOBYTE(vkState);
+            BYTE shiftState = HIBYTE(vkState);
+            bool bShift = (shiftState & 1) != 0;
+            BYTE scan = (BYTE)MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
+
+            if (bShift)
+            {
+                keybd_event(VK_SHIFT, (BYTE)MapVirtualKeyW(VK_SHIFT, MAPVK_VK_TO_VSC), 0, 0);
+                Sleep(2);
+            }
+            keybd_event(vk, scan, 0, 0);
+            Sleep(2);
+            keybd_event(vk, scan, KEYEVENTF_KEYUP, 0);
+            if (bShift)
+            {
+                Sleep(2);
+                keybd_event(VK_SHIFT, (BYTE)MapVirtualKeyW(VK_SHIFT, MAPVK_VK_TO_VSC), KEYEVENTF_KEYUP, 0);
+            }
+        }
+        else
+        {
+            keybd_event(0, (BYTE)(ch & 0xFF), KEYEVENTF_UNICODE, 0);
+            Sleep(2);
+            keybd_event(0, (BYTE)(ch & 0xFF), KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0);
+        }
     }
     Sleep(3);
 }
@@ -656,37 +683,45 @@ static bool IsCredUIDialogOpen()
     return (hwndDlg && IsWindowVisible(hwndDlg));
 }
 
-static void SimulatePinInput(LPCWSTR pszPin, bool bIsCredUI = false)
+struct PinSimParams
 {
-    if (!pszPin || wcslen(pszPin) == 0) return;
+    WCHAR pin[128];
+    bool bIsCredUI;
+};
 
-    LogMsg(L"SimulatePinInput: starting simulation for %d characters (bIsCredUI=%d)...", (int)wcslen(pszPin), bIsCredUI);
+static DWORD WINAPI PinSimulationThread(LPVOID lpParam)
+{
+    PinSimParams* params = (PinSimParams*)lpParam;
+    if (!params) return 0;
+
+    LogMsg(L"PinSimulationThread: started for %d characters (bIsCredUI=%d)...", (int)wcslen(params->pin), params->bIsCredUI);
 
     HDESK hInputDesk = NULL;
-    if (!bIsCredUI)
+    if (!params->bIsCredUI)
     {
-        hInputDesk = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_HOOKCONTROL | DESKTOP_JOURNALRECORD | DESKTOP_JOURNALPLAYBACK);
+        // On a pristine thread with no message queue or windows, attach to the active input desktop
+        hInputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
         if (!hInputDesk)
         {
-            hInputDesk = OpenDesktopW(L"Winlogon", 0, FALSE, DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_HOOKCONTROL | DESKTOP_JOURNALRECORD | DESKTOP_JOURNALPLAYBACK);
+            hInputDesk = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_SWITCHDESKTOP | DESKTOP_HOOKCONTROL);
+        }
+        if (!hInputDesk)
+        {
+            hInputDesk = OpenDesktopW(L"Winlogon", 0, FALSE, GENERIC_ALL);
         }
         if (hInputDesk)
         {
-            SetThreadDesktop(hInputDesk);
-            LogMsg(L"SimulatePinInput: attached to Winlogon input desktop.");
+            BOOL bSet = SetThreadDesktop(hInputDesk);
+            LogMsg(L"PinSimulationThread: SetThreadDesktop result=%d, err=%lu, hDesk=%p", bSet, GetLastError(), hInputDesk);
         }
-    }
-
-    if (!bIsCredUI)
-    {
-        // Curtain was already pre-dismissed in StartVerification. Send a quick Spacebar tap and short sleep
-        LogMsg(L"SimulatePinInput: ensuring lock screen curtain is dismissed...");
-        SendKey(VK_SPACE);
-        Sleep(60);
+        else
+        {
+            LogMsg(L"PinSimulationThread: OpenInputDesktop failed, err=%lu", GetLastError());
+        }
     }
     else
     {
-        // In CredUI dialog box: ensure the dialog window has focus
+        // CredUI scenario: ensure dialog window has focus
         HWND hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
         if (!hwndDlg) hwndDlg = FindWindowW(NULL, L"Windows Security");
         if (!hwndDlg) hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", NULL);
@@ -694,32 +729,62 @@ static void SimulatePinInput(LPCWSTR pszPin, bool bIsCredUI = false)
         {
             SetForegroundWindow(hwndDlg);
             BringWindowToTop(hwndDlg);
-            Sleep(30);
+            Sleep(40);
         }
     }
 
-    // Step 2: Clear any previous input from the password/PIN box
-    for (int b = 0; b < 8; b++)
+    if (!params->bIsCredUI)
     {
-        SendKey(VK_BACK);
+        // Step 1: Tap Spacebar to dismiss lock screen curtain and allow XAML input field to gain focus
+        LogMsg(L"PinSimulationThread: tapping Spacebar to dismiss lock curtain...");
+        FastSendKey(VK_SPACE);
+        Sleep(260);
     }
-    Sleep(15);
 
-    // Step 3: Type each character with genuine hardware Unicode packets (KEYEVENTF_UNICODE)
-    LogMsg(L"SimulatePinInput: typing password/PIN characters with KEYEVENTF_UNICODE...");
-    for (size_t i = 0; i < wcslen(pszPin); i++)
+    // Step 2: Clear any accidental or previous input from the password/PIN box
+    LogMsg(L"PinSimulationThread: clearing input box...");
+    for (int b = 0; b < 10; b++)
     {
-        SendUnicodeChar(pszPin[i]);
+        FastSendKey(VK_BACK);
+    }
+    Sleep(20);
+
+    // Step 3: Type each character with hardware virtual keys or Unicode packets
+    LogMsg(L"PinSimulationThread: typing %d characters...", (int)wcslen(params->pin));
+    for (size_t i = 0; i < wcslen(params->pin); i++)
+    {
+        FastSendChar(params->pin[i]);
     }
 
     // Step 4: Submit password/PIN with Enter
-    Sleep(35);
-    SendKey(VK_RETURN);
-    LogMsg(L"SimulatePinInput: password/PIN entered and submitted.");
+    Sleep(40);
+    LogMsg(L"PinSimulationThread: submitting with Enter...");
+    FastSendKey(VK_RETURN);
+    LogMsg(L"PinSimulationThread: credentials entered and submitted.");
 
     if (hInputDesk)
     {
         CloseDesktop(hInputDesk);
+    }
+
+    delete params;
+    return 0;
+}
+
+static void SimulatePinInput(LPCWSTR pszPin, bool bIsCredUI)
+{
+    if (!pszPin || wcslen(pszPin) == 0) return;
+
+    LogMsg(L"SimulatePinInput: spawning dedicated worker thread for %d characters (bIsCredUI=%d)...", (int)wcslen(pszPin), bIsCredUI);
+    PinSimParams* params = new PinSimParams();
+    StringCchCopyW(params->pin, ARRAYSIZE(params->pin), pszPin);
+    params->bIsCredUI = bIsCredUI;
+
+    HANDLE hThread = CreateThread(NULL, 0, PinSimulationThread, params, 0, NULL);
+    if (hThread)
+    {
+        WaitForSingleObject(hThread, 3500);
+        CloseHandle(hThread);
     }
 }
 
@@ -904,12 +969,6 @@ void FaceCredential::DoVerification()
 
             if (wcslen(secret) > 0)
             {
-                if (!bIsCredUI)
-                {
-                    LogMsg(L"Face verified: ensuring lock screen curtain is awake...");
-                    SendKey(VK_SPACE);
-                }
-
                 // Fire PIN auto-fill immediately while wink animation and chime play concurrently
                 LogMsg(L"Face verified! Triggering instant password/PIN auto-fill (%d characters, bIsCredUI=%d)...",
                        (int)wcslen(secret), bIsCredUI);
@@ -975,12 +1034,8 @@ void FaceCredential::DoVerification()
                             }
                         }
 
-                        // Clear and re-type
-                        for (int b = 0; b < 16; b++) SendKey(VK_BACK);
-                        Sleep(25);
-                        for (size_t i = 0; i < wcslen(secret); i++) SendUnicodeChar(secret[i]);
-                        Sleep(50);
-                        SendKey(VK_RETURN);
+                        // Trigger auto-fill via dedicated input thread
+                        SimulatePinInput(secret, bIsCredUI);
 
                         lastAutoRetry = GetTickCount();
                         Sleep(400); // Debounce
