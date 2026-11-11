@@ -233,21 +233,14 @@ HRESULT FaceCredentialProvider::GetCredentialCount(DWORD* pdwCount, DWORD* pdwDe
 {
     if (!pdwCount || !pdwDefault || !pbAutoLogonWithDefault) return E_POINTER;
 
-    if (m_pCredential && m_pCredential->IsVerified())
-    {
-        LogProvider(L"GetCredentialCount: Face verified! Providing auto-logon credential (count=1, default=0, autoLogon=TRUE)");
-        *pdwCount = 1;
-        *pdwDefault = 0;
-        *pbAutoLogonWithDefault = TRUE;
-    }
-    else
-    {
-        // Return 0 while waiting so LogonUI does NOT show any tile under "Sign-in options".
-        // Windows Hello Face acts as an ambient biometric overlay on top of the default unlock interface!
-        *pdwCount = 0;
-        *pdwDefault = CREDENTIAL_PROVIDER_NO_DEFAULT;
-        *pbAutoLogonWithDefault = FALSE;
-    }
+    // Return 0 so LogonUI does NOT show any tile under "Sign-in options".
+    // Windows Hello Face acts as an ambient biometric overlay on top of the
+    // default Windows Hello PIN unlock interface!
+    *pdwCount = 0;
+    *pdwDefault = CREDENTIAL_PROVIDER_NO_DEFAULT;
+    *pbAutoLogonWithDefault = FALSE;
+
+    LogProvider(L"GetCredentialCount: returning count=0 (Face runs as ambient overlay on top of Windows Hello PIN)");
     return S_OK;
 }
 

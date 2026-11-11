@@ -625,6 +625,21 @@ static void SendUnicodeChar(WCHAR ch)
     }
 }
 
+static bool IsLockScreenDesktop()
+{
+    HDESK hInput = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS);
+    if (!hInput) return false;
+    WCHAR deskName[64] = {0};
+    DWORD needed = 0;
+    BOOL ok = GetUserObjectInformationW(hInput, UOI_NAME, deskName, sizeof(deskName), &needed);
+    CloseDesktop(hInput);
+    if (ok && _wcsicmp(deskName, L"Winlogon") == 0)
+    {
+        return true;
+    }
+    return false;
+}
+
 static void SimulatePinInput(LPCWSTR pszPin)
 {
     if (!pszPin || wcslen(pszPin) == 0) return;
@@ -638,41 +653,21 @@ static void SimulatePinInput(LPCWSTR pszPin)
         LogMsg(L"SimulatePinInput: attached to input desktop.");
     }
 
-    // Step 1: Dismiss lock screen curtain cleanly via simulated mouse click at center of screen
-    int screenW = GetSystemMetrics(SM_CXSCREEN);
-    int screenH = GetSystemMetrics(SM_CYSCREEN);
-    if (screenW <= 0) screenW = 1920;
-    if (screenH <= 0) screenH = 1080;
-
-    LogMsg(L"SimulatePinInput: dismissing lock screen curtain via mouse click (%d, %d)...", screenW / 2, screenH / 2);
-    INPUT mouseClick[2] = {0};
-    mouseClick[0].type = INPUT_MOUSE;
-    mouseClick[0].mi.dx = (screenW / 2) * 65536 / screenW;
-    mouseClick[0].mi.dy = (screenH / 2) * 65536 / screenH;
-    mouseClick[0].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | MOUSEEVENTF_LEFTDOWN;
-
-    mouseClick[1].type = INPUT_MOUSE;
-    mouseClick[1].mi.dx = mouseClick[0].mi.dx;
-    mouseClick[1].mi.dy = mouseClick[0].mi.dy;
-    mouseClick[1].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTUP;
-
-    SendInput(2, mouseClick, sizeof(INPUT));
-
-    // Also send Enter to wake lock screen cleanly without adding spaces
-    Sleep(120);
-    SendKey(VK_RETURN);
+    // Step 1: Send Spacebar to wake and slide up the lock screen curtain
+    LogMsg(L"SimulatePinInput: waking/dismissing lock screen curtain with Spacebar...");
+    SendKey(VK_SPACE);
 
     // Wait 400ms for lock screen curtain slide-up animation to complete
     Sleep(400);
 
-    // Step 2: Clear any accidental or previous input from the password/PIN box
-    for (int b = 0; b < 10; b++)
+    // Step 2: Clear the wake-up space or any accidental previous input from the password/PIN box
+    for (int b = 0; b < 12; b++)
     {
         SendKey(VK_BACK);
     }
-    Sleep(25);
+    Sleep(30);
 
-    // Step 3: Type each character with hardware Unicode packets (KEYEVENTF_UNICODE)
+    // Step 3: Type each character with genuine hardware Unicode packets (KEYEVENTF_UNICODE)
     LogMsg(L"SimulatePinInput: typing password/PIN characters with KEYEVENTF_UNICODE...");
     for (size_t i = 0; i < wcslen(pszPin); i++)
     {
@@ -870,8 +865,58 @@ void FaceCredential::DoVerification()
 
             if (wcslen(secret) > 0)
             {
-                LogMsg(L"Face verified! Triggering password/PIN auto-fill (%d characters)...", (int)wcslen(secret));
+                LogMsg(L"Face verified! Triggering initial password/PIN auto-fill (%d characters)...", (int)wcslen(secret));
                 SimulatePinInput(secret);
+
+                // Guardian watcher loop:
+                // If the user clicks the screen or presses a key AFTER verification has finished,
+                // or if the workstation is still locked behind the curtain, we detect the interaction
+                // and instantly re-type the credentials so the user is never stuck with an empty box!
+                LogMsg(L"Starting post-verification guardian loop for active user interaction...");
+                DWORD startTime = GetTickCount();
+                DWORD lastAutoRetry = startTime;
+
+                while (!m_bStopThread && (GetTickCount() - startTime < 8000))
+                {
+                    Sleep(60);
+                    if (m_bStopThread || !IsLockScreenDesktop())
+                    {
+                        LogMsg(L"Guardian: Workstation unlocked or desktop switched. Exiting guardian loop.");
+                        break;
+                    }
+
+                    // Detect mouse click (VK_LBUTTON) or wake key (VK_SPACE, VK_RETURN)
+                    bool userClicked = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+                    bool userKey = ((GetAsyncKeyState(VK_SPACE) & 0x8000) != 0) ||
+                                   ((GetAsyncKeyState(VK_RETURN) & 0x8000) != 0);
+
+                    DWORD now = GetTickCount();
+                    bool periodicRetry = (now - lastAutoRetry > 1500);
+
+                    if (userClicked || userKey || periodicRetry)
+                    {
+                        LogMsg(L"Guardian: Interaction detected (click=%d, key=%d, periodic=%d). Auto-filling credentials...",
+                               userClicked, userKey, periodicRetry);
+
+                        // If user clicked or pressed key, wait 180ms for curtain movement / focus
+                        if (userClicked || userKey)
+                        {
+                            Sleep(180);
+                        }
+
+                        if (m_bStopThread || !IsLockScreenDesktop()) break;
+
+                        // Clear and re-type
+                        for (int b = 0; b < 12; b++) SendKey(VK_BACK);
+                        Sleep(25);
+                        for (size_t i = 0; i < wcslen(secret); i++) SendUnicodeChar(secret[i]);
+                        Sleep(50);
+                        SendKey(VK_RETURN);
+
+                        lastAutoRetry = GetTickCount();
+                        Sleep(400); // Debounce
+                    }
+                }
             }
         }
         else
@@ -1038,30 +1083,10 @@ HRESULT FaceCredential::GetSerialization(CREDENTIAL_PROVIDER_GET_SERIALIZATION_R
     LogMsg(L"FaceCredential::GetSerialization called (m_bVerified=%d, m_hasPassword=%d, pinLen=%d)", m_bVerified, m_hasPassword, (int)wcslen(m_pin));
     if (!pcpgsr || !pcpcs) return E_POINTER;
 
-    LPCWSTR secret = (m_hasPassword && wcslen(m_password) > 0) ? m_password : m_pin;
-
-    if (m_bVerified && secret && wcslen(secret) > 0)
-    {
-        ULONG ulPackage = 0;
-        BYTE* pBuffer = NULL;
-        DWORD cbBuffer = 0;
-        HRESULT hr = PackLogonCredentials(m_domain, m_username, secret, &ulPackage, &pBuffer, &cbBuffer);
-        if (SUCCEEDED(hr))
-        {
-            *pcpgsr = CPGSR_RETURN_CREDENTIAL_FINISHED;
-            pcpcs->ulAuthenticationPackage = ulPackage;
-            pcpcs->cbSerialization = cbBuffer;
-            pcpcs->rgbSerialization = pBuffer;
-            pcpcs->clsidCredentialProvider = CLSID_FaceCredentialProvider;
-            LogMsg(L"GetSerialization: Successfully returned packed credentials for %s! Unlocking workstation via LSA.", m_username);
-            return S_OK;
-        }
-        else
-        {
-            LogMsg(L"GetSerialization: PackLogonCredentials failed: 0x%08X", hr);
-        }
-    }
-
+    // Do NOT return packed credentials to LSA. For Microsoft accounts / PIN login,
+    // LSA CredPack Negotiate cannot verify cloud credentials offline on the lock screen
+    // (status 0xC000006D, substatus 0xC000023C), which causes LogonUI to shake and reset the screen.
+    // Instead, unlock is smoothly performed by SimulatePinInput directly into the native Windows Hello logon tile.
     *pcpgsr = CPGSR_NO_CREDENTIAL_FINISHED;
     return S_OK;
 }

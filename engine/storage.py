@@ -56,18 +56,21 @@ def load_profile():
         print(f"Error loading face profile: {e}")
         return None
 
-def save_credentials(username, password="", domain="", pin=""):
+def save_credentials(username, password=None, domain=None, pin=None):
     """
     Encrypts user logon credentials (PIN or Password) using Windows DPAPI.
     Uses CRYPTPROTECT_LOCAL_MACHINE (0x4) so both the user and system-level
     lock-screen components (LogonUI / reboot startup) can decrypt on this PC.
+    Retains existing credentials when only updating PIN or password.
     """
     os.makedirs(PROFILE_DIR, exist_ok=True)
+    existing = load_credentials() or {}
+
     payload = {
-        "username": username,
-        "password": password,
-        "domain": domain,
-        "pin": pin
+        "username": username or existing.get("username", ""),
+        "password": password if password is not None else existing.get("password", ""),
+        "domain": domain if domain is not None else existing.get("domain", ""),
+        "pin": pin if pin is not None else existing.get("pin", "")
     }
     raw_data = pickle.dumps(payload)
     encrypted_blob = win32crypt.CryptProtectData(
