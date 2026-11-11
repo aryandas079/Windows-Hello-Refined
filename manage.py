@@ -25,7 +25,7 @@ def main():
     choice = input("\nSelect an option [0-7]: ").strip()
 
     if choice == "1":
-        subprocess.run([python_exe, "enrollment/enroll.py"])
+        subprocess.run([python_exe, "setup_face.py"])
     elif choice == "2":
         subprocess.run([python_exe, "engine/test_live.py"])
     elif choice == "3":

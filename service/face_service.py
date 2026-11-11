@@ -82,6 +82,10 @@ class FaceDaemon:
             if not self.ensure_camera():
                 return {"status": "error", "message": "Could not access camera"}
 
+            # Discard initial dark sensor frames while camera auto-exposure stabilizes
+            for _ in range(4):
+                self.camera.read()
+
             start_time = time.time()
             while time.time() - start_time < timeout_sec:
                 ret, frame = self.camera.read()
@@ -89,15 +93,15 @@ class FaceDaemon:
                     time.sleep(0.015)
                     continue
 
-                enhanced = self.engine.preprocess_lighting(frame)
-                face, _ = self.engine.detect_face(enhanced)
+                face, _ = self.engine.detect_face(frame)
 
                 if face is not None:
                     is_live, score, live_msg = self.engine.check_liveness(frame, face)
                     if not is_live:
+                        time.sleep(0.01)
                         continue  # Reject spoof
 
-                    feature = self.engine.extract_features(enhanced, face)
+                    feature = self.engine.extract_features(frame, face)
                     is_match, similarity = self.engine.match_face(feature, enrolled)
 
                     if is_match:

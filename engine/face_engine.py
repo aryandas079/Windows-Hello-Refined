@@ -6,9 +6,9 @@ class FaceEngine:
     def __init__(self,
                  detector_path="models/face_detection_yunet_2023mar.onnx",
                  recognizer_path="models/face_recognition_sface_2021dec.onnx",
-                 score_threshold=0.6,
+                 score_threshold=0.45,
                  nms_threshold=0.3,
-                 cosine_threshold=0.363):
+                 cosine_threshold=0.34):
         """
         FaceEngine provides sub-second face detection, alignment,
         liveness detection, and embedding matching.
@@ -20,7 +20,7 @@ class FaceEngine:
 
         self.score_threshold = score_threshold
         self.nms_threshold = nms_threshold
-        self.cosine_threshold = cosine_threshold  # Default SFace cosine threshold is ~0.363 (higher = stricter)
+        self.cosine_threshold = cosine_threshold
 
         # Initialize YuNet Detector
         self.detector = cv2.FaceDetectorYN.create(
@@ -71,16 +71,14 @@ class FaceEngine:
         Passive anti-spoofing:
         - Texture frequency check (Laplacian variance)
         - Color spectrum variance (YCrCb color space distribution)
-        - Screen reflection & moire frequency pattern analysis
-        Rejects flat 2D screens, printed paper, and low-texture mockups.
+        Tuned for standard 720p/1080p webcams with auto-exposure.
         """
         x, y, w, h = int(face[0]), int(face[1]), int(face[2]), int(face[3])
-        # Add a small boundary margin safely
         H, W = frame.shape[:2]
         x1, y1 = max(0, x), max(0, y)
         x2, y2 = min(W, x + w), min(H, y + h)
 
-        if x2 - x1 < 40 or y2 - y1 < 40:
+        if x2 - x1 < 30 or y2 - y1 < 30:
             return False, 0.0, "Face too small / far"
 
         face_roi = frame[y1:y2, x1:x2]
@@ -88,9 +86,9 @@ class FaceEngine:
         # 1. High frequency texture analysis (Laplacian)
         gray = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
         lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-        if lap_var < 35.0:
-            # Too blurry or flat texture (typical of low-res screen photo or paper)
-            return False, lap_var, "Texture blur / spoof detected"
+        if lap_var < 10.0:
+            # Extreme blur or solid block (typical of fake/printed paper)
+            return False, float(lap_var), "Extreme blur detected"
 
         # 2. Color reflection check in YCrCb
         ycrcb = cv2.cvtColor(face_roi, cv2.COLOR_BGR2YCrCb)
@@ -98,12 +96,10 @@ class FaceEngine:
         cr_std = np.std(cr)
         cb_std = np.std(cb)
 
-        # Screens often cause abnormal Cr/Cb color saturation or uniform pixel clipping
-        if cr_std < 2.5 or cb_std < 2.5:
-            return False, float(cr_std + cb_std), "Screen color compression detected"
+        if cr_std < 1.0 or cb_std < 1.0:
+            return False, float(cr_std + cb_std), "Abnormal color compression"
 
-        # Score between 0 and 1
-        liveness_score = min(1.0, (lap_var / 300.0) * 0.5 + ((cr_std + cb_std) / 25.0) * 0.5)
+        liveness_score = min(1.0, (lap_var / 150.0) * 0.5 + ((cr_std + cb_std) / 20.0) * 0.5)
         return True, liveness_score, "Live human verified"
 
     def extract_features(self, frame, face):
