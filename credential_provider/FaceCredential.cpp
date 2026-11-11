@@ -315,11 +315,8 @@ void FaceCredential::StartVerification()
     LeaveCriticalSection(&m_cs);
 }
 
-static void DismissLockCurtain();
-
 DWORD WINAPI FaceCredential::VerificationThread(LPVOID lpParam)
 {
-    DismissLockCurtain();
     FaceCredential* pThis = reinterpret_cast<FaceCredential*>(lpParam);
     pThis->DoVerification();
     EnterCriticalSection(&pThis->m_cs);
@@ -582,87 +579,42 @@ static void ExtractJsonString(const char* json, const char* key, WCHAR* outBuf, 
     MultiByteToWideChar(CP_UTF8, 0, val, -1, outBuf, maxChars);
 }
 
-static void DismissLockCurtain()
-{
-    LogMsg(L"DismissLockCurtain: sending multi-modal wake up inputs...");
-
-    HDESK hInputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
-    if (hInputDesk)
-    {
-        SetThreadDesktop(hInputDesk);
-    }
-
-    int screenW = GetSystemMetrics(SM_CXSCREEN);
-    int screenH = GetSystemMetrics(SM_CYSCREEN);
-    if (screenW <= 0) screenW = 1920;
-    if (screenH <= 0) screenH = 1080;
-
-    // 1. Mouse Click at center of screen (neutral, dismisses lock curtain without typing)
-    DWORD normX = (DWORD)(((screenW / 2) * 65535) / screenW);
-    DWORD normY = (DWORD)(((screenH / 2) * 65535) / screenH);
-
-    INPUT mouseClick[2] = {0};
-    mouseClick[0].type = INPUT_MOUSE;
-    mouseClick[0].mi.dx = normX;
-    mouseClick[0].mi.dy = normY;
-    mouseClick[0].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTDOWN;
-
-    mouseClick[1].type = INPUT_MOUSE;
-    mouseClick[1].mi.dx = normX;
-    mouseClick[1].mi.dy = normY;
-    mouseClick[1].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTUP;
-
-    SendInput(2, mouseClick, sizeof(INPUT));
-    Sleep(30);
-
-    // 2. Mouse wheel scroll up (scrolls lock curtain away)
-    INPUT scroll = {0};
-    scroll.type = INPUT_MOUSE;
-    scroll.mi.dwFlags = MOUSEEVENTF_WHEEL;
-    scroll.mi.mouseData = 120 * 4;
-    SendInput(1, &scroll, sizeof(INPUT));
-    Sleep(30);
-
-    // 3. Extended VK_UP (Swipe up to unlock on Windows 11)
-    INPUT keyUp[2] = {0};
-    keyUp[0].type = INPUT_KEYBOARD;
-    keyUp[0].ki.wVk = VK_UP;
-    keyUp[0].ki.dwFlags = KEYEVENTF_EXTENDEDKEY;
-
-    keyUp[1].type = INPUT_KEYBOARD;
-    keyUp[1].ki.wVk = VK_UP;
-    keyUp[1].ki.dwFlags = KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP;
-
-    SendInput(2, keyUp, sizeof(INPUT));
-    Sleep(30);
-
-    // 4. Spacebar (universal lock screen wake key)
-    INPUT space[2] = {0};
-    space[0].type = INPUT_KEYBOARD;
-    space[0].ki.wVk = VK_SPACE;
-
-    space[1].type = INPUT_KEYBOARD;
-    space[1].ki.wVk = VK_SPACE;
-    space[1].ki.dwFlags = KEYEVENTF_KEYUP;
-
-    SendInput(2, space, sizeof(INPUT));
-
-    LogMsg(L"DismissLockCurtain: wake up inputs sent.");
-}
-
 static void SimulatePinInput(LPCWSTR pszPin)
 {
     if (!pszPin || wcslen(pszPin) == 0) return;
 
     LogMsg(L"SimulatePinInput: starting simulation for %d characters...", (int)wcslen(pszPin));
 
-    DismissLockCurtain();
+    HDESK hInputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
+    if (hInputDesk)
+    {
+        SetThreadDesktop(hInputDesk);
+        LogMsg(L"SimulatePinInput: attached to input desktop.");
+    }
 
-    // Give lock curtain 600ms transition buffer if it just started sliding up
-    Sleep(600);
+    // Step 1: Send Spacebar + Extended Up Arrow to slide up the lock screen curtain upon successful verification
+    LogMsg(L"SimulatePinInput: sending Spacebar + Extended Up to slide up curtain...");
+    INPUT wake[4] = {0};
+    wake[0].type = INPUT_KEYBOARD;
+    wake[0].ki.wVk = VK_SPACE;
+    wake[1].type = INPUT_KEYBOARD;
+    wake[1].ki.wVk = VK_SPACE;
+    wake[1].ki.dwFlags = KEYEVENTF_KEYUP;
 
-    // Step 2: Send Backspaces to clear any partial input or spacebar in the PIN box
-    for (int b = 0; b < 8; b++)
+    wake[2].type = INPUT_KEYBOARD;
+    wake[2].ki.wVk = VK_UP;
+    wake[2].ki.dwFlags = KEYEVENTF_EXTENDEDKEY;
+    wake[3].type = INPUT_KEYBOARD;
+    wake[3].ki.wVk = VK_UP;
+    wake[3].ki.dwFlags = KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP;
+
+    SendInput(4, wake, sizeof(INPUT));
+
+    // Wait 750ms for lock curtain to slide up and focus the PIN box
+    Sleep(750);
+
+    // Step 2: Send Backspaces to clear any partial input or wake-up space in the PIN box
+    for (int b = 0; b < 6; b++)
     {
         INPUT bs[2] = {0};
         bs[0].type = INPUT_KEYBOARD;
@@ -674,9 +626,10 @@ static void SimulatePinInput(LPCWSTR pszPin)
         Sleep(20);
     }
 
-    Sleep(60);
+    Sleep(50);
 
     // Step 3: Type each character of the PIN
+    LogMsg(L"SimulatePinInput: typing PIN characters...");
     for (size_t i = 0; i < wcslen(pszPin); i++)
     {
         WCHAR ch = pszPin[i];
@@ -690,10 +643,10 @@ static void SimulatePinInput(LPCWSTR pszPin)
         charInput[1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
 
         SendInput(2, charInput, sizeof(INPUT));
-        Sleep(35);
+        Sleep(40);
     }
 
-    // Step 4: Send Enter to submit the PIN
+    // Step 4: Submit PIN with Enter
     Sleep(100);
     INPUT enter[2] = {0};
     enter[0].type = INPUT_KEYBOARD;
