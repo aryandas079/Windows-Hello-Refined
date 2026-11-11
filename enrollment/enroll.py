@@ -58,9 +58,12 @@ def draw_hud(frame, face, step_info, current_samples, total_samples, liveness_ok
             cv2.circle(frame, pt, 3, (0, 255, 255), -1)
 
 def run_enrollment(camera_index=0):
-    print("=" * 60)
-    print("      WINDOWS HELLO REFINED - FACE ENROLLMENT")
-    print("=" * 60)
+    print("=" * 68)
+    print("        WINDOWS HELLO REFINED - BIOMETRIC ENROLLMENT")
+    print("                        Made by Aryan Das")
+    print("          GitHub:   https://github.com/aryandas079 (@aryandas079)")
+    print("          LinkedIn: https://linkedin.com/in/iam-aryandas (@iam-aryandas)")
+    print("=" * 68)
 
     username = getpass.getuser()
     print(f"Enrolling biometric profile for Windows User: [{username}]")

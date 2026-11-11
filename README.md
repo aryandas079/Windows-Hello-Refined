@@ -284,5 +284,13 @@ Windows will instantly restore default sign-in options without a reboot.
 
 ---
 
+## Author
+
+**Aryan Das**
+- GitHub: [@aryandas079](https://github.com/aryandas079)
+- LinkedIn: [@iam-aryandas](https://linkedin.com/in/iam-aryandas)
+
+---
+
 ## License
 This project is licensed under the Apache License, Version 2.0. See the [LICENSE](file:///d:/Projects_New/Windows%20Hello%20Refined/LICENSE) file for the full license text.

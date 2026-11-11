@@ -12,9 +12,12 @@ from engine.face_engine import FaceEngine
 from engine.storage import load_profile
 
 def run_live_test(camera_index=0):
-    print("=" * 60)
-    print("    WINDOWS HELLO REFINED - LIVE RECOGNITION TEST")
-    print("=" * 60)
+    print("=" * 68)
+    print("       WINDOWS HELLO REFINED - LIVE BIOMETRIC TEST HUD")
+    print("                        Made by Aryan Das")
+    print("          GitHub:   https://github.com/aryandas079 (@aryandas079)")
+    print("          LinkedIn: https://linkedin.com/in/iam-aryandas (@iam-aryandas)")
+    print("=" * 68)
 
     profile = load_profile()
     if not profile:

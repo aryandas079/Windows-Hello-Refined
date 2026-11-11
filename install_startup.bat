@@ -1,8 +1,11 @@
 @echo off
 title Windows Hello Refined - Install Boot Startup Service
-echo =======================================================
-echo   WINDOWS HELLO REFINED - BOOT & RESTART AUTO-START
-echo =======================================================
+echo ===================================================================
+echo             WINDOWS HELLO REFINED - BOOT & RESTART SERVICE
+echo                        Made by Aryan Das
+echo          GitHub:   https://github.com/aryandas079 (@aryandas079)
+echo          LinkedIn: https://linkedin.com/in/iam-aryandas (@iam-aryandas)
+echo ===================================================================
 echo.
 
 net session >nul 2>&1

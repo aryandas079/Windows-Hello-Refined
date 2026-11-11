@@ -3,10 +3,13 @@ import os
 import subprocess
 
 def show_banner():
-    print("=" * 65)
-    print("        WINDOWS HELLO REFINED - FACE ID SYSTEM")
+    print("=" * 68)
+    print("             WINDOWS HELLO REFINED - FACE ID SYSTEM")
+    print("                        Made by Aryan Das")
+    print("          GitHub:   https://github.com/aryandas079 (@aryandas079)")
+    print("          LinkedIn: https://linkedin.com/in/iam-aryandas (@iam-aryandas)")
     print("   High-Speed Biometric Authentication on Any Standard Camera")
-    print("=" * 65)
+    print("=" * 68)
 
 def main():
     show_banner()

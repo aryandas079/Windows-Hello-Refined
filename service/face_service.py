@@ -218,6 +218,12 @@ class FaceDaemon:
                 time.sleep(0.05)
 
 if __name__ == "__main__":
+    print("=" * 68)
+    print("        WINDOWS HELLO REFINED - BACKGROUND BIOMETRIC SERVICE")
+    print("                        Made by Aryan Das")
+    print("          GitHub:   https://github.com/aryandas079 (@aryandas079)")
+    print("          LinkedIn: https://linkedin.com/in/iam-aryandas (@iam-aryandas)")
+    print("=" * 68)
     idx = int(sys.argv[1]) if len(sys.argv) > 1 else 0
     daemon = FaceDaemon(idx)
     daemon.run_server()

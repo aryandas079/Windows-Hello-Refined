@@ -9,14 +9,17 @@ if BASE_DIR not in sys.path:
 from engine.storage import save_credentials, load_credentials
 
 def main():
-    print("=" * 65)
-    print("      WINDOWS HELLO REFINED - INSTANT PIN AUTO-UNLOCK")
-    print("=" * 65)
+    print("=" * 68)
+    print("             WINDOWS HELLO REFINED - PIN AUTO-UNLOCK")
+    print("                        Made by Aryan Das")
+    print("          GitHub:   https://github.com/aryandas079 (@aryandas079)")
+    print("          LinkedIn: https://linkedin.com/in/iam-aryandas (@iam-aryandas)")
+    print("=" * 68)
     print("On Windows 11 with a Microsoft Account, Windows signs in using your")
     print("Windows Hello PIN (passwords are disabled by Windows security policy).")
     print("\nTo automatically unlock your screen when your face is recognized,")
     print("enter your Windows Hello PIN once (encrypted securely with Windows DPAPI).")
-    print("=" * 65)
+    print("=" * 68)
 
     user = getpass.getuser()
     print(f"\n[*] Target Windows User: [{user}]")

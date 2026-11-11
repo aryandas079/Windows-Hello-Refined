@@ -3,6 +3,13 @@ setlocal
 
 call "D:\Visual Studio\VC\Auxiliary\Build\vcvars64.bat"
 
+echo ===================================================================
+echo        WINDOWS HELLO REFINED - CREDENTIAL PROVIDER BUILD
+echo                        Made by Aryan Das
+echo          GitHub:   https://github.com/aryandas079 (@aryandas079)
+echo          LinkedIn: https://linkedin.com/in/iam-aryandas (@iam-aryandas)
+echo ===================================================================
+echo.
 echo Compiling Modern V2 FaceCredentialProvider.dll (x64)...
 cd /d "D:\Projects_New\Windows Hello Refined\credential_provider"
 

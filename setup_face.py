@@ -21,10 +21,13 @@ STEPS = [
 ]
 
 def print_header():
-    print("=" * 65)
-    print("        WINDOWS HELLO REFINED - ONE-TIME FACE SETUP")
+    print("=" * 68)
+    print("        WINDOWS HELLO REFINED - ONE-TIME BIOMETRIC ENROLLMENT")
+    print("                        Made by Aryan Das")
+    print("          GitHub:   https://github.com/aryandas079 (@aryandas079)")
+    print("          LinkedIn: https://linkedin.com/in/iam-aryandas (@iam-aryandas)")
     print("   Enrolls your face once; works automatically on the lock screen!")
-    print("=" * 65)
+    print("=" * 68)
 
 def draw_hud(frame, face, step_info, current_in_step, total_samples, total_needed=14):
     h, w = frame.shape[:2]

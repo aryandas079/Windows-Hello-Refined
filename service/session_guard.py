@@ -79,5 +79,11 @@ class SessionGuard:
             cap.release()
 
 if __name__ == "__main__":
+    print("=" * 68)
+    print("          WINDOWS HELLO REFINED - PRESENCE AUTO-LOCK GUARD")
+    print("                        Made by Aryan Das")
+    print("          GitHub:   https://github.com/aryandas079 (@aryandas079)")
+    print("          LinkedIn: https://linkedin.com/in/iam-aryandas (@iam-aryandas)")
+    print("=" * 68)
     guard = SessionGuard(away_timeout=25, check_interval=2)
     guard.start()
