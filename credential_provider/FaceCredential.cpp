@@ -604,80 +604,40 @@ static void ExtractJsonString(const char* json, const char* key, WCHAR* outBuf, 
 
 static void FastSendKey(WORD vk, bool bExtended)
 {
-    INPUT inputs[2] = {0};
-    inputs[0].type = INPUT_KEYBOARD;
-    inputs[0].ki.wVk = vk;
-    inputs[0].ki.wScan = (WORD)MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
-    inputs[0].ki.dwFlags = bExtended ? KEYEVENTF_EXTENDEDKEY : 0;
-
-    inputs[1].type = INPUT_KEYBOARD;
-    inputs[1].ki.wVk = vk;
-    inputs[1].ki.wScan = inputs[0].ki.wScan;
-    inputs[1].ki.dwFlags = (bExtended ? KEYEVENTF_EXTENDEDKEY : 0) | KEYEVENTF_KEYUP;
-
-    UINT sent = SendInput(2, inputs, sizeof(INPUT));
-    if (sent != 2)
-    {
-        DWORD err = GetLastError();
-        LogMsg(L"FastSendKey(0x%04X) SendInput failed (sent=%u, err=%lu), using keybd_event fallback", vk, sent, err);
-        BYTE scan = (BYTE)MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
-        DWORD flags = bExtended ? KEYEVENTF_EXTENDEDKEY : 0;
-        keybd_event((BYTE)vk, scan, flags, 0);
-        Sleep(2);
-        keybd_event((BYTE)vk, scan, flags | KEYEVENTF_KEYUP, 0);
-    }
+    BYTE scan = (BYTE)MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
+    DWORD flags = bExtended ? KEYEVENTF_EXTENDEDKEY : 0;
+    keybd_event((BYTE)vk, scan, flags, 0);
+    Sleep(2);
+    keybd_event((BYTE)vk, scan, flags | KEYEVENTF_KEYUP, 0);
     Sleep(2);
 }
 
 static void FastSendChar(WCHAR ch)
 {
-    INPUT inputs[2] = {0};
-    inputs[0].type = INPUT_KEYBOARD;
-    inputs[0].ki.wVk = 0;
-    inputs[0].ki.wScan = ch;
-    inputs[0].ki.dwFlags = KEYEVENTF_UNICODE;
-
-    inputs[1].type = INPUT_KEYBOARD;
-    inputs[1].ki.wVk = 0;
-    inputs[1].ki.wScan = ch;
-    inputs[1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
-
-    UINT sent = SendInput(2, inputs, sizeof(INPUT));
-    if (sent != 2)
+    SHORT vkState = VkKeyScanW(ch);
+    if (vkState != -1)
     {
-        DWORD err = GetLastError();
-        LogMsg(L"FastSendChar('%c') SendInput failed (sent=%u, err=%lu), using keybd_event fallback", ch, sent, err);
+        BYTE vk = LOBYTE(vkState);
+        BYTE shiftState = HIBYTE(vkState);
+        bool bShift = (shiftState & 1) != 0;
+        BYTE scan = (BYTE)MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
 
-        SHORT vkState = VkKeyScanW(ch);
-        if (vkState != -1)
+        if (bShift)
         {
-            BYTE vk = LOBYTE(vkState);
-            BYTE shiftState = HIBYTE(vkState);
-            bool bShift = (shiftState & 1) != 0;
-            BYTE scan = (BYTE)MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
-
-            if (bShift)
-            {
-                keybd_event(VK_SHIFT, (BYTE)MapVirtualKeyW(VK_SHIFT, MAPVK_VK_TO_VSC), 0, 0);
-                Sleep(2);
-            }
-            keybd_event(vk, scan, 0, 0);
-            Sleep(2);
-            keybd_event(vk, scan, KEYEVENTF_KEYUP, 0);
-            if (bShift)
-            {
-                Sleep(2);
-                keybd_event(VK_SHIFT, (BYTE)MapVirtualKeyW(VK_SHIFT, MAPVK_VK_TO_VSC), KEYEVENTF_KEYUP, 0);
-            }
+            keybd_event(VK_SHIFT, (BYTE)MapVirtualKeyW(VK_SHIFT, MAPVK_VK_TO_VSC), 0, 0);
         }
-        else
+        keybd_event(vk, scan, 0, 0);
+        keybd_event(vk, scan, KEYEVENTF_KEYUP, 0);
+        if (bShift)
         {
-            keybd_event(0, (BYTE)(ch & 0xFF), KEYEVENTF_UNICODE, 0);
-            Sleep(2);
-            keybd_event(0, (BYTE)(ch & 0xFF), KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0);
+            keybd_event(VK_SHIFT, (BYTE)MapVirtualKeyW(VK_SHIFT, MAPVK_VK_TO_VSC), KEYEVENTF_KEYUP, 0);
         }
     }
-    Sleep(3);
+    else
+    {
+        keybd_event(0, (BYTE)(ch & 0xFF), KEYEVENTF_UNICODE, 0);
+        keybd_event(0, (BYTE)(ch & 0xFF), KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0);
+    }
 }
 
 static bool IsLockScreenDesktop()
@@ -744,37 +704,42 @@ static DWORD WINAPI PinSimulationThread(LPVOID lpParam)
     {
         // CredUI scenario: wait for complete Windows Hello celebration (smile, wink, chime) before typing PIN
         LogMsg(L"PinSimulationThread: waiting for complete Windows Hello celebration animation on CredUI dialog...");
-        Sleep(1400);
+        Sleep(1350);
 
-        // CredUI scenario: ensure dialog window has focus and click into PIN box
+        // Ensure CredUI dialog window has focus and click directly into PIN box
         HWND hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
         if (!hwndDlg) hwndDlg = FindWindowW(NULL, L"Windows Security");
         if (!hwndDlg) hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", NULL);
-        if (hwndDlg)
+        if (!hwndDlg || !IsWindowVisible(hwndDlg))
         {
-            SetForegroundWindow(hwndDlg);
-            BringWindowToTop(hwndDlg);
+            LogMsg(L"PinSimulationThread: CredUI dialog closed before typing.");
+            delete params;
+            return 0;
+        }
+
+        SetForegroundWindow(hwndDlg);
+        BringWindowToTop(hwndDlg);
+        SetActiveWindow(hwndDlg);
+        Sleep(40);
+
+        RECT rcDlg;
+        if (GetWindowRect(hwndDlg, &rcDlg))
+        {
+            int dlgW = rcDlg.right - rcDlg.left;
+            int dlgH = rcDlg.bottom - rcDlg.top;
+            int pinX = rcDlg.left + dlgW / 2;
+            int pinY = rcDlg.top + (int)(dlgH * 0.70);
+
+            POINT oldCursor;
+            GetCursorPos(&oldCursor);
+            SetCursorPos(pinX, pinY);
+            Sleep(20);
+            mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+            Sleep(15);
+            mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
             Sleep(40);
-
-            RECT rcDlg;
-            if (GetWindowRect(hwndDlg, &rcDlg))
-            {
-                int dlgW = rcDlg.right - rcDlg.left;
-                int dlgH = rcDlg.bottom - rcDlg.top;
-                int pinX = rcDlg.left + dlgW / 2;
-                int pinY = rcDlg.top + (int)(dlgH * 0.67);
-
-                POINT oldCursor;
-                GetCursorPos(&oldCursor);
-                SetCursorPos(pinX, pinY);
-                Sleep(20);
-                mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
-                Sleep(15);
-                mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
-                Sleep(40);
-                SetCursorPos(oldCursor.x, oldCursor.y);
-                LogMsg(L"PinSimulationThread: focused CredUI PIN box via click at (%d,%d)", pinX, pinY);
-            }
+            SetCursorPos(oldCursor.x, oldCursor.y);
+            LogMsg(L"PinSimulationThread: focused CredUI PIN box via click at (%d,%d)", pinX, pinY);
         }
     }
     else
@@ -795,11 +760,12 @@ static DWORD WINAPI PinSimulationThread(LPVOID lpParam)
     }
     Sleep(20);
 
-    // Step 3: Type each character with hardware virtual keys or Unicode packets
-    LogMsg(L"PinSimulationThread: typing %d characters...", (int)wcslen(params->pin));
+    // Step 3: Type each character in one continuous stroke
+    LogMsg(L"PinSimulationThread: typing %d characters in one continuous stroke...", (int)wcslen(params->pin));
     for (size_t i = 0; i < wcslen(params->pin); i++)
     {
         FastSendChar(params->pin[i]);
+        Sleep(8);
     }
 
     // Step 4: Submit password/PIN with Enter
@@ -1000,17 +966,11 @@ void FaceCredential::DoVerification()
                 m_overlay.SetState(OVERLAY_VERIFIED, m_statusText);
                 LeaveCriticalSection(&m_cs);
 
-                if (m_pEvents)
-                {
-                    m_pEvents->SetFieldString(this, FPF_STATUS_TEXT, m_statusText);
-                    m_pEvents->SetFieldState(this, FPF_SUBMIT_BUTTON, CPFS_DISPLAY_IN_SELECTED_TILE);
-
-                    HBITMAP hbmpWink = LoadAssetBitmap(L"hello_wink.bmp");
-                    if (hbmpWink)
-                    {
-                        m_pEvents->SetFieldBitmap(this, FPF_LOGO, hbmpWink);
-                    }
-                }
+                HWND hwndDlgCheck = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
+                if (!hwndDlgCheck) hwndDlgCheck = FindWindowW(NULL, L"Windows Security");
+                if (!hwndDlgCheck) hwndDlgCheck = FindWindowW(L"Credential Dialog Xaml Host", NULL);
+                bool bIsCredUI = (hwndDlgCheck != NULL && IsWindowVisible(hwndDlgCheck)) || !IsLockScreenDesktop() ||
+                                 (m_cpus == CPUS_CREDUI || (int)m_cpus == 3 || (int)m_cpus == 4);
 
                 if (m_pProvider && !bIsCredUI)
                 {

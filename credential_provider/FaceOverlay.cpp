@@ -270,7 +270,7 @@ void FaceOverlay::RunAnimation()
     // In CredUI or in-session dialogs, wait briefly for CredUI XAML Host to become visible
     if (!bLockDesk || m_scenario == CPUS_CREDUI || (int)m_scenario == 3 || (int)m_scenario == 4)
     {
-        for (int i = 0; i < 15; i++)
+        for (int i = 0; i < 20; i++)
         {
             hwndSec = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
             if (!hwndSec) hwndSec = FindWindowW(NULL, L"Windows Security");
@@ -291,9 +291,16 @@ void FaceOverlay::RunAnimation()
         }
     }
 
-    bool bIsCredUI = (hwndSec != NULL && IsWindowVisible(hwndSec)) || !bLockDesk ||
-                     (m_scenario == CPUS_CREDUI || (int)m_scenario == 3);
+    bool bIsCredUI = (hwndSec != NULL && IsWindowVisible(hwndSec));
     bool bIsLockScreen = bLockDesk && !bIsCredUI;
+
+    // On interactive desktop with NO CredUI prompt, DO NOT show a floating detached window
+    if (!bLockDesk && !bIsCredUI)
+    {
+        LogOverlay(L"Interactive desktop without CredUI prompt: skipping overlay creation.");
+        m_bRunning = FALSE;
+        return;
+    }
 
     HMONITOR hMon = MonitorFromWindow(hwndSec ? hwndSec : GetDesktopWindow(), MONITOR_DEFAULTTOPRIMARY);
     MONITORINFO mi = { sizeof(mi) };
@@ -311,23 +318,17 @@ void FaceOverlay::RunAnimation()
     if (bIsCredUI)
     {
         RECT rc = {0};
-        if (hwndSec && IsWindowVisible(hwndSec) && GetWindowRect(hwndSec, &rc))
-        {
-            int dlgW = rc.right - rc.left;
-            int dlgH = rc.bottom - rc.top;
-            winW = dlgW - 48;
-            winH = 140;
-            posX = rc.left + 24;
-            posY = rc.top + (int)(dlgH * 0.325);
-            LogOverlay(L"CredUI dialog scenario: embedded replacement overlay (%d,%d %dx%d)", posX, posY, winW, winH);
-        }
-        else
-        {
-            winW = 440;
-            winH = 140;
-            posX = mi.rcWork.left + (monW - winW) / 2;
-            posY = mi.rcWork.top + (monH / 2) - 50;
-        }
+        GetWindowRect(hwndSec, &rc);
+        int dlgW = rc.right - rc.left;
+        int dlgH = rc.bottom - rc.top;
+
+        // Position strictly below horizontal separator line (dlgH * 0.38)
+        // and above the user email address (dlgH * 0.60)
+        winW = dlgW - 64;
+        winH = (int)(dlgH * 0.20);
+        posX = rc.left + 32;
+        posY = rc.top + (int)(dlgH * 0.39);
+        LogOverlay(L"CredUI dialog scenario: attached replacement overlay (%d,%d %dx%d)", posX, posY, winW, winH);
     }
 
     typedef HWND (WINAPI *pfnCreateWindowInBand)(
@@ -349,11 +350,15 @@ void FaceOverlay::RunAnimation()
     HMODULE hUser32 = GetModuleHandleW(L"user32.dll");
     pfnCreateWindowInBand pCreateWindowInBand = hUser32 ? (pfnCreateWindowInBand)GetProcAddress(hUser32, "CreateWindowInBand") : NULL;
 
-    DWORD dwExStyle = WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT;
+    DWORD dwExStyle = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT;
+    if (!bIsCredUI)
+    {
+        dwExStyle |= WS_EX_TOPMOST;
+    }
     DWORD dwStyle = WS_POPUP;
 
     HWND hwndCreated = NULL;
-    if (pCreateWindowInBand && !bIsCredUI)
+    if (pCreateWindowInBand && bIsLockScreen)
     {
         DWORD bands[] = { 16, 15, 14, 7, 6, 0 };
         for (DWORD band : bands)
@@ -383,7 +388,8 @@ void FaceOverlay::RunAnimation()
             L"Windows Hello Overlay",
             dwStyle,
             posX, posY, winW, winH,
-            NULL, NULL, hInst, NULL
+            bIsCredUI ? hwndSec : NULL, // ATTACH AS OWNED WINDOW OF CREDUI LOGIN PROMPT!
+            NULL, hInst, NULL
         );
     }
 
@@ -443,45 +449,40 @@ void FaceOverlay::RunAnimation()
             DispatchMessageW(&msg);
         }
 
-        // For CredUI dialog, ensure overlay follows dialog position if moved
-        HWND hwndSecLoop = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
-        if (!hwndSecLoop) hwndSecLoop = FindWindowW(NULL, L"Windows Security");
-        if (!hwndSecLoop) hwndSecLoop = FindWindowW(L"Credential Dialog Xaml Host", NULL);
-        if (hwndSecLoop)
+        if (bIsCredUI)
         {
-            RECT rc = {0};
-            GetWindowRect(hwndSecLoop, &rc);
-            int w = rc.right - rc.left;
-            int h = rc.bottom - rc.top;
-            if (w >= 1000 || h >= 800)
+            // For CredUI dialog, ensure overlay follows dialog position if moved
+            HWND hwndSecLoop = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
+            if (!hwndSecLoop) hwndSecLoop = FindWindowW(NULL, L"Windows Security");
+            if (!hwndSecLoop) hwndSecLoop = FindWindowW(L"Credential Dialog Xaml Host", NULL);
+            if (!hwndSecLoop || !IsWindow(hwndSecLoop) || !IsWindowVisible(hwndSecLoop))
             {
-                hwndSecLoop = NULL;
+                LogOverlay(L"CredUI dialog closed or hidden. Exiting overlay immediately.");
+                m_bRunning = FALSE;
+                break;
             }
-        }
 
-        bool bCredUILoop = (hwndSecLoop != NULL && IsWindowVisible(hwndSecLoop)) || !bLockDesk ||
-                           (m_scenario == CPUS_CREDUI || (int)m_scenario == 3);
-
-        if (bCredUILoop && hwndSecLoop && IsWindowVisible(hwndSecLoop))
-        {
-            RECT rcSec;
+            RECT rcSec = {0};
             if (GetWindowRect(hwndSecLoop, &rcSec))
             {
                 int dlgW = rcSec.right - rcSec.left;
                 int dlgH = rcSec.bottom - rcSec.top;
-                int targetX = rcSec.left + 24;
-                int targetY = rcSec.top + (int)(dlgH * 0.325);
+                int targetX = rcSec.left + 32;
+                int targetY = rcSec.top + (int)(dlgH * 0.39);
                 if (targetX != posX || targetY != posY)
                 {
                     posX = targetX;
                     posY = targetY;
                     ptDst.x = posX;
                     ptDst.y = posY;
+                    SetWindowPos(m_hwnd, NULL, posX, posY, winW, winH, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW);
                 }
             }
         }
-
-        SetWindowPos(m_hwnd, HWND_TOPMOST, posX, posY, winW, winH, SWP_NOACTIVATE | SWP_NOREDRAW);
+        else
+        {
+            SetWindowPos(m_hwnd, HWND_TOPMOST, posX, posY, winW, winH, SWP_NOACTIVATE | SWP_NOREDRAW);
+        }
 
         EnterCriticalSection(&m_cs);
         OVERLAY_STATE curState = m_state;
@@ -602,13 +603,12 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
         if (rc.right - rc.left >= 1000 || rc.bottom - rc.top >= 800) hwndSecDlg = NULL;
     }
     bool bLockDesk = IsLockScreenDesktopOverlay();
-    bool bIsCredUI = (hwndSecDlg != NULL && IsWindowVisible(hwndSecDlg)) || !bLockDesk ||
-                     (m_scenario == CPUS_CREDUI || (int)m_scenario == 3);
+    bool bIsCredUI = (hwndSecDlg != NULL && IsWindowVisible(hwndSecDlg));
     bool bIsLockScreen = bLockDesk && !bIsCredUI;
     bool bLightTheme = false;
 
     float cx = width / 2.0f;
-    float cy = bIsCredUI ? 44.0f : 50.0f;
+    float cy = bIsCredUI ? 38.0f : 50.0f;
 
     if (bIsCredUI)
     {
@@ -709,12 +709,14 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
             sf.SetAlignment(Gdiplus::StringAlignmentCenter);
             sf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
 
+            float textY = bIsCredUI ? 76.0f : 82.0f;
+            float textH = 30.0f;
             if (!bLightTheme)
             {
-                Gdiplus::RectF ts(0.0f, 83.5f, (float)width, 34.0f);
+                Gdiplus::RectF ts(0.0f, textY + 1.5f, (float)width, textH);
                 g.DrawString(m_statusText, -1, &font, ts, &sf, &shadowBrush);
             }
-            Gdiplus::RectF tr(0.0f, 82.0f, (float)width, 34.0f);
+            Gdiplus::RectF tr(0.0f, textY, (float)width, textH);
             g.DrawString(m_statusText, -1, &font, tr, &sf, &textBrush);
         }
     }
@@ -789,8 +791,8 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
         format.SetAlignment(Gdiplus::StringAlignmentCenter);
         format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
 
-        float textY = bIsCredUI ? 82.0f : 78.0f;
-        float textH = 34.0f;
+        float textY = bIsCredUI ? 76.0f : 78.0f;
+        float textH = 30.0f;
 
         if (!bLightTheme)
         {
