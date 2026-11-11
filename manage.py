@@ -19,9 +19,10 @@ def main():
     print("  4. Start Walk-Away Auto-Lock (Presence Guard)")
     print("  5. Register Native Windows Lock Screen Credential Provider")
     print("  6. Unregister Credential Provider")
+    print("  7. Preview Transparent Windows Hello HTML/SVG Animation")
     print("  0. Exit")
 
-    choice = input("\nSelect an option [0-6]: ").strip()
+    choice = input("\nSelect an option [0-7]: ").strip()
 
     if choice == "1":
         subprocess.run([python_exe, "enrollment/enroll.py"])
@@ -40,6 +41,8 @@ def main():
         dll_path = os.path.abspath("credential_provider/FaceCredentialProvider.dll")
         subprocess.run(["regsvr32", "/u", "/s", dll_path])
         print("[-] Credential Provider unregistered.")
+    elif choice == "7":
+        subprocess.run([python_exe, "ui/show_hello.py"])
     elif choice == "0":
         print("Exiting.")
     else:
