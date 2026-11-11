@@ -4,8 +4,13 @@
 [![Language](https://img.shields.io/badge/Language-C%2B%2B17%20%7C%20Python%203.10%2B-00599C?logo=c%2B%2B)](https://python.org)
 [![Computer Vision](https://img.shields.io/badge/CV-OpenCV%20DNN%20(YuNet%20%2B%20SFace)-5C3EE8?logo=opencv)](https://opencv.org)
 [![Security](https://img.shields.io/badge/Security-Windows%20DPAPI%20Encrypted-success)](#security--privacy)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-**Windows Hello Refined** brings native, sub-second biometric Face Unlock to **any standard RGB laptop or USB webcam**—no specialized infrared (IR) or depth camera hardware required.
+**Windows Hello Refined** brings native, sub-second biometric Face Unlock to **any standard RGB laptop or USB webcam** without requiring specialized infrared (IR) or depth camera hardware.
+
+Created by **Aryan Das**  
+- GitHub: [@aryandas079](https://github.com/aryandas079) (https://github.com/aryandas079)  
+- LinkedIn: [@iam-aryandas](https://linkedin.com/in/iam-aryandas) (https://linkedin.com/in/iam-aryandas)  
 
 It integrates directly into the genuine **Windows Lock Screen (`LogonUI.exe`)** using a native 64-bit C++ Windows Credential Provider, displaying the official-style animated gazing eye ("Looking for you...") that spins into a smile upon verification and unlocks straight to the desktop.
 
@@ -15,109 +20,94 @@ It integrates directly into the genuine **Windows Lock Screen (`LogonUI.exe`)** 
 
 The project combines low-level Windows operating system internals with modern deep learning and computer vision:
 
-### Core Technologies & Frameworks
+### Core Technologies and Frameworks
 | Layer | Technologies Used | Description |
 | :--- | :--- | :--- |
-| **Biometric AI & Vision** | **OpenCV DNN**, **YuNet (2023mar)**, **SFace (2021dec)** | Lightweight CNNs for ultra-fast face detection (~15ms) and 128-dimensional feature embedding extraction (~35ms). |
-| **Anti-Spoofing & Liveness** | **Laplacian Texture Variance**, **YCrCb Chromaticity** | Filters out mobile screens, printed photos, and digital displays by detecting moiré patterns and unnatural specular reflections. |
+| **Biometric AI and Vision** | **OpenCV DNN**, **YuNet (2023mar)**, **SFace (2021dec)** | Lightweight CNNs for ultra-fast face detection (~15ms) and 128-dimensional feature embedding extraction (~35ms). |
+| **Anti-Spoofing and Liveness** | **Laplacian Texture Variance**, **YCrCb Chromaticity** | Filters out mobile screens, printed photos, and digital displays by detecting moire patterns and unnatural specular reflections. |
 | **Lock Screen Integration** | **C++17**, **Windows Credential Provider SDK** (`ICredentialProviderCredential3`) | Native 64-bit DLL loaded directly by `LogonUI.exe` on the secure `Winlogon` desktop. |
-| **Visual Animation & HUD** | **Win32 Layered Windows**, **GDI+**, `BITMAPV5HEADER` | Transparent overlay rendered with per-pixel alpha compositing, featuring gazing eye tracking, 900° spin, wink, and drop shadows. |
-| **Biometric & Credential Vault**| **Windows DPAPI** (`CryptProtectData` / `CryptUnprotectData`) | Hardware-backed cryptographic protection tied directly to the current user's Windows security descriptor. |
+| **Visual Animation and HUD** | **Win32 Layered Windows**, **GDI+**, `BITMAPV5HEADER` | Transparent overlay rendered with per-pixel alpha compositing, featuring gazing eye tracking, 900-degree spin, wink, and drop shadows. |
+| **Biometric and Credential Vault**| **Windows DPAPI** (`CryptProtectData` / `CryptUnprotectData`) | Hardware-backed cryptographic protection tied directly to the current user's Windows security descriptor. |
 | **Inter-Process Communication** | **Win32 Named Pipes** (`\\.\pipe\WindowsHelloRefinedPipe`) | Secure, high-throughput IPC between the lock screen credential provider and the pre-warmed background vision daemon. |
 | **Automated Unlock Engine** | **Win32 `SendInput`** (`KEYEVENTF_UNICODE`) | Types the DPAPI-secured Windows Hello PIN directly into the active logon desktop for instant TPM-verified unlock on Windows 11. |
-| **Tooling & Compilers** | **MSVC x64** (`cl.exe`, `link.exe`), **Python 3.10+ Virtual Environment** | Visual Studio 2022/2026 C++ toolchain and Windows SDK (`user32`, `gdiplus`, `credui`, `secur32`, `wtsapi32`). |
+| **Tooling and Compilers** | **MSVC x64** (`cl.exe`, `link.exe`), **Python 3.10+ Virtual Environment** | Visual Studio 2022/2026 C++ toolchain and Windows SDK (`user32`, `gdiplus`, `credui`, `secur32`, `wtsapi32`). |
 
 ---
 
 ## Key Features
 
+- **One-Click Installation and Removal**: Single `install.bat` sets up everything; single `uninstall.bat` cleanly removes everything.
 - **Standard RGB Camera Support**: Works on 720p/1080p laptop webcams and USB cameras without infrared.
-- **Native Lock Screen Animation**: Official Windows Hello-style animated gazing eye appears at the top center of the lock screen from the very beginning.
+- **Native Lock Screen Animation**: Windows Hello-style animated gazing eye appears at the top center of the lock screen from the very beginning.
+- **Wallpaper and Clock Maintained**: The screen stays on the wallpaper and clock during verification; if verified, it slides up and unlocks; if not verified, it stays undisturbed until a key is tapped.
 - **Instant Unlock (~1.1s)**: Fast multi-stage verification pipeline with zero cold-start camera delay.
 - **Windows 11 Passwordless Compliant**: Supports Microsoft Accounts (`DevicePasswordLessBuildVersion = 2`) via hardware-backed PIN simulation.
-- **PIN Fallback Always Intact**: Windows Hello PIN remains fully accessible in "Sign-in options" at all times.
-- **Anti-Spoofing & Liveness Verification**: Rejects smartphones, photo prints, and static images.
+- **Hidden from Sign-in Tiles**: Operates as an ambient background overlay without creating clutter or duplicate tiles under Sign-in options.
+- **Anti-Spoofing and Liveness Verification**: Rejects smartphones, photo prints, and static images.
 - **Hardware-Friendly**: Camera hardware is released immediately upon verification (webcam LED turns off instantly).
-- **Walk-Away Auto-Lock (Optional)**: Automatically locks your workstation (<kbd>Win</kbd> + <kbd>L</kbd>) when you step away from your desk.
+- **Auto-Starts on Boot and Restart**: Automatically active when turning on your PC from shutdown or after rebooting.
+- **Lock Screen De-Cluttering**: Option during setup to disable Windows Spotlight news, fun facts, tips, and widgets.
 
 ---
 
-## Prerequisites
+## Quick Start: One-Click Installation
 
-- **Operating System**: Windows 10 (64-bit) or Windows 11 (64-bit).
-- **Camera**: Standard built-in webcam or external USB webcam (Index `0`).
-- **Python**: Python 3.10, 3.11, 3.12, or 3.13 (64-bit) installed and added to `PATH`.
-- **Compiler (Optional, only if compiling DLL from source)**: Visual Studio 2022 or 2026 with "Desktop development with C++" installed. *(A precompiled 64-bit DLL is included.)*
+The entire setup is unified into a single script:
 
----
-
-## Setup & Installation Guide
-
-### Step 1: Clone the Repository
+### 1. Download or Clone the Repository
 ```powershell
 git clone https://github.com/aryandas079/Windows-Hello-Refined.git
 cd "Windows Hello Refined"
 ```
 
-### Step 2: Set Up Python Virtual Environment
-Create and activate a virtual environment, then install required packages:
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
-### Step 3: Enroll Your Face Profile
-Run the one-time interactive face enrollment tool:
-```powershell
-.\.venv\Scripts\python.exe setup_face.py
-```
-- A camera window will open with an on-screen HUD.
-- Follow the 4-step prompts:
-  1. **Look Straight** (5 samples)
-  2. **Turn Slightly Left** (3 samples)
-  3. **Turn Slightly Right** (3 samples)
-  4. **Tilt / Smile Naturally** (3 samples)
-- Biometric embeddings are encrypted with **Windows DPAPI** and stored in `data/face_profile.enc`.
-
-### Step 4: Save Windows Hello PIN (For Instant Auto-Unlock)
-On Windows 11 with a Microsoft Account, Windows disables password authentication on the lock screen and only accepts your Windows Hello PIN.
-
-Run the PIN configuration utility:
-```powershell
-.\.venv\Scripts\python.exe save_pin.py
-```
-- Enter your **Windows Hello PIN** (e.g. your 4-digit or 6-digit numeric PIN).
-- The PIN is encrypted with **Windows DPAPI** and stored in `data/credentials.enc`.
-
-> [!NOTE]
-> Your PIN never leaves your computer; it is protected by the Windows Data Protection API and can only be decrypted on your specific machine by your user account.
-
-### Step 5: (Optional) Build Credential Provider DLL from Source
-If you wish to recompile the native 64-bit C++ Credential Provider:
+### 2. Run the All-in-One Installer
+Double-click `install.bat` (or run in an elevated command prompt):
 ```cmd
-cmd /c "credential_provider\build.bat"
+install.bat
 ```
-*(Uses the Developer Command Prompt toolchain to produce `credential_provider\FaceCredentialProvider.dll`.)*
 
-### Step 6: Register with Windows Lock Screen
-Open PowerShell or Command Prompt **as Administrator** and register the DLL:
-```powershell
-regsvr32 "D:\Projects_New\Windows Hello Refined\credential_provider\FaceCredentialProvider.dll"
-```
-You will receive a confirmation dialog: `DllRegisterServer in ...FaceCredentialProvider.dll succeeded.`
+The installer automatically guides you through the full onboarding:
+1. **Administrator Elevation**: Prompts for UAC elevation if not already running as admin.
+2. **Environment Setup**: Verifies Python 3.10+ and automatically sets up `.venv` with `requirements.txt`.
+3. **Face Biometric Enrollment**: Opens the camera HUD and captures 14 multi-angle samples (Look straight, Turn left, Turn right, Tilt/Smile).
+4. **Windows Hello PIN Setup**: Asks for your Windows Hello PIN once and encrypts it locally with Windows DPAPI.
+5. **Clean Lock Screen**: Asks if you want to remove Windows Spotlight fun facts, news, tips, and MSN widgets.
+6. **Credential Provider Registration**: Registers `FaceCredentialProvider.dll` with Windows LogonUI (`regsvr32`).
+7. **Boot-Time Startup Service**: Registers a Windows Scheduled Task (`WindowsHelloRefinedDaemon`) to automatically run on computer startup, restart, and login.
+8. **Service Startup**: Launches the background daemon immediately so you are ready to use it without rebooting.
 
-*(To unregister at any time, run `regsvr32 /u "path\to\FaceCredentialProvider.dll"`.)*
+### 3. Test It
+Press <kbd>Win</kbd> + <kbd>L</kbd> to lock your screen. Look at your camera to verify and unlock!
 
 ---
 
-## How to Use
+## Complete Removal: One-Click Uninstaller
 
-### 1. Interactive CLI Manager
-You can manage the entire application through the unified interactive manager:
+To completely remove Windows Hello Refined from your device:
+
+Double-click `uninstall.bat` (or run in an elevated command prompt):
+```cmd
+uninstall.bat
+```
+
+The uninstaller automatically:
+1. Terminates any running background face service.
+2. Deletes the Windows boot-time Scheduled Task and registry startup keys.
+3. Unregisters `FaceCredentialProvider.dll` from Windows LogonUI (`regsvr32 /u`).
+4. Cleans up all Credential Provider registry entries from `HKLM`.
+5. Prompts whether you want to delete your saved biometric data and encrypted PIN.
+6. Restores Windows native sign-in state completely intact.
+
+---
+
+## Interactive Management Console
+
+For manual testing, individual component diagnostics, or fine-tuning, run the interactive manager:
+
 ```powershell
 .\.venv\Scripts\python.exe manage.py
 ```
+
 ```
 Options:
   1. Enroll Face Profile (Run this first!)
@@ -127,73 +117,12 @@ Options:
   5. Start Walk-Away Auto-Lock (Presence Guard)
   6. Register Native Windows Lock Screen Credential Provider
   7. Unregister Credential Provider
-  8. Install Automatic Boot/Restart Startup Service (Run on Power-On)
-  9. Remove Boot/Restart Startup Service
+  8. Run All-in-One Installer (install.bat)
+  9. Run All-in-One Uninstaller (uninstall.bat)
  10. Clean Lock Screen (Remove News, Fun Facts, Tips & Widgets)
  11. Preview Transparent Windows Hello HTML/SVG Animation
   0. Exit
 ```
-
----
-
-### 2. Live Camera & Recognition Test
-To test face recognition speed and anti-spoofing without locking your screen:
-```powershell
-.\.venv\Scripts\python.exe engine\test_live.py
-```
-- **Green Box**: Enrolled user recognized (shows similarity percentage, e.g. 78%).
-- **Orange Box**: Unknown face.
-- **Red Box**: Spoof attempt detected (photo print or phone screen).
-- Press <kbd>q</kbd> or <kbd>Esc</kbd> to exit.
-
----
-
-### 3. Start the Background Service
-The background service handles webcam requests from the Windows lock screen:
-```powershell
-.\.venv\Scripts\python.exe service\face_service.py
-```
-You should see:
-```
-[SERVICE] Windows Hello Refined Face ID Service started.
-[SERVICE] Listening on Named Pipe: \\.\pipe\WindowsHelloRefinedPipe
-```
-
----
-
-### 4. Lock Your PC & Unlock with Face ID
-1. Press <kbd>Win</kbd> + <kbd>L</kbd> to lock your screen.
-2. The animated gazing eye appears immediately at the top center: *"Windows Hello: Looking for you..."*.
-3. Look at your webcam.
-4. Within **~1.1 seconds**, your face is verified:
-   - The scanning arc spins 900° into a smile and winks: *"Hello, <YourName>"*.
-   - The system automatically enters your PIN and unlocks your PC to the desktop!
-5. **Fallback**: If you are not in front of the camera, your Windows Hello PIN is right there in "Sign-in options" to enter manually.
-
----
-
-## Automatic Startup on Boot & Restart
-
-Windows Hello Refined works immediately upon powering on the computer from shutdown or after a system restart through a two-layer architecture:
-
-### Layer 1: In-Process On-Demand Auto-Start (Automatic Fail-Safe)
-The native Credential Provider (`FaceCredentialProvider.dll`) automatically detects whether the background biometric daemon is active. If the computer has just booted up and the pipe is not yet running, it spawns `pythonw.exe service\face_service.py` directly from the lock screen and waits for the pipe to initialize before beginning face verification.
-
-### Layer 2: Pre-Warmed Boot Service (Recommended for Fastest Unlock)
-To have the face recognition engine already warmed up in memory before you even sit in front of the screen:
-
-**Method 1: Right-Click Installer**
-1. Right-click `install_startup.bat` in the project root.
-2. Select **Run as administrator**.
-
-**Method 2: Interactive Manager**
-Run `.\.venv\Scripts\python.exe manage.py` and choose **Option 8**.
-
-**Method 3: PowerShell (Administrator)**
-```powershell
-schtasks /create /tn "WindowsHelloRefinedDaemon" /tr "`"$PWD\.venv\Scripts\pythonw.exe`" `"$PWD\service\face_service.py`"" /sc onstart /ru "SYSTEM" /rl highest /f
-```
-*(To remove the boot task at any time, run `uninstall_startup.bat` or select Option 9 in `manage.py`.)*
 
 ---
 
@@ -207,18 +136,18 @@ flowchart TD
     D -->|Opens Camera| E["Webcam Hardware (Index 0)"]
     E -->|Captured Frame| F["FaceEngine (YuNet + SFace)"]
     F -->|Liveness Check| G{"Human Verified?"}
-    G -- No --> H["Return FAILED to Lock Screen"]
+    G -- No --> H["Screen stays on Clock & Wallpaper"]
     G -- Yes --> I{"Biometric Match >= 0.42?"}
-    I -- Yes --> J["Decrypt Credentials via Windows DPAPI"]
+    I -- Yes --> J["Decrypt PIN via Windows DPAPI"]
     J -->|Return verified + PIN| B
     B -->|Plays Spin & Wink Animation| C
-    B -->|SimulatePinInput via SendInput| K["Windows Hello PIN Box"]
+    B -->|SimulatePinInput via SendInput| K["Slide up curtain & Enter PIN"]
     K -->|TPM Authenticates| L["Windows Desktop Unlocked!"]
     D -->|Release Camera| M["Webcam LED Turns Off Immediately"]
 ```
 
 1. **Zero Cloud Dependencies**: 100% of detection, alignment, feature extraction, and matching runs entirely offline on your local machine.
-2. **DPAPI Hardware Binding**: Profiles are encrypted using Windows Data Protection API (`win32crypt.CryptProtectData`). Only your logged-in Windows security principal can decrypt them.
+2. **DPAPI Hardware Binding**: Profiles and PINs are encrypted using Windows Data Protection API (`win32crypt.CryptProtectData`). Only your logged-in Windows security principal can decrypt them.
 3. **Hardware Privacy Indicator**: The camera is opened strictly for 1-2 seconds during verification and released immediately (`cv2.VideoCapture.release()`), ensuring the physical camera LED remains off while your PC is in use.
 
 ---
@@ -234,16 +163,14 @@ Windows Hello Refined/
 │   ├── build.bat            # MSVC compiler script
 │   ├── FaceCredential.cpp   # Credential tile logic & PIN auto-unlock simulation
 │   ├── FaceCredential.h     # ICredentialProviderCredential3 interface definitions
-│   ├── FaceCredentialProvider.cpp # Tile enumeration & LogonUI registration
+│   ├── FaceCredentialProvider.cpp # Ambient overlay registration (0 sign-in tiles)
 │   ├── FaceOverlay.cpp      # Top-center animated layered window overlay
 │   ├── FaceOverlay.h        # Overlay state machine & GDI+ renderer
-│   └── FaceCredentialProvider.dll # Compiled binary
+│   └── FaceCredentialProvider.dll # Compiled 64-bit binary
 ├── engine/                  # Biometric detection & verification engine
 │   ├── face_engine.py       # YuNet detector + SFace recognizer + Liveness filters
 │   ├── storage.py           # DPAPI profile & PIN encryption handlers
 │   └── test_live.py         # Real-time visual verification HUD
-├── enrollment/              # Biometric enrollment tools
-│   └── enroll.py            # Head-pose enrollment script
 ├── models/                  # Pretrained ONNX deep learning models
 │   ├── face_detection_yunet_2023mar.onnx
 │   └── face_recognition_sface_2021dec.onnx
@@ -251,12 +178,14 @@ Windows Hello Refined/
 │   ├── face_service.py      # Named pipe IPC biometric daemon
 │   └── session_guard.py     # Walk-away auto-lock presence monitor
 ├── clean_lockscreen.py      # Lock screen de-clutter utility (removes trivia/widgets)
+├── install.bat              # Single All-in-One installer (Setup + PIN + Clean + Register + Auto-Start)
 ├── manage.py                # Unified interactive CLI manager
+├── README.md                # Documentation
+├── requirements.txt         # Python package dependencies
+├── save_password.py         # Password storage utility
 ├── save_pin.py              # DPAPI Windows Hello PIN storage tool
 ├── setup_face.py            # Graphical 4-angle enrollment application
-├── install_startup.bat      # Boot-time service installer (schtasks)
-├── uninstall_startup.bat    # Boot-time service uninstaller
-└── requirements.txt         # Python package dependencies
+└── uninstall.bat            # Single All-in-One uninstaller
 ```
 
 ---
@@ -273,30 +202,16 @@ To view live logs in PowerShell:
 Get-Content -Path "C:\Users\Public\WindowsHelloRefined.log" -Wait -Tail 30
 ```
 
-### Frequently Asked Questions
-
-**Q: Why doesn't it unlock with my Outlook / Microsoft account password?**  
-**A:** Windows 11 enforces `DevicePasswordLessBuildVersion = 2` for Microsoft Accounts, which disables password unlocks at the lock screen for security. Windows strictly requires your **Windows Hello PIN** (verified by the TPM chip). Run `.\.venv\Scripts\python.exe save_pin.py` to store your PIN.
-
-**Q: The camera doesn't turn on or fails to verify.**  
-**A:** Check if another application (such as Zoom, Teams, or Skype) has locked the webcam. Also ensure that `CAMERA_INDEX` in `engine/face_engine.py` matches your camera (default is `0`).
-
-**Q: How do I completely uninstall the lock screen provider?**  
-**A:** Open an Administrator PowerShell and run:
-```powershell
-regsvr32 /u "D:\Projects_New\Windows Hello Refined\credential_provider\FaceCredentialProvider.dll"
-```
-Windows will instantly restore default sign-in options without a reboot.
-
 ---
 
 ## Author
 
 **Aryan Das**
-- GitHub: [@aryandas079](https://github.com/aryandas079)
-- LinkedIn: [@iam-aryandas](https://linkedin.com/in/iam-aryandas)
+- GitHub: [@aryandas079](https://github.com/aryandas079) (https://github.com/aryandas079)
+- LinkedIn: [@iam-aryandas](https://linkedin.com/in/iam-aryandas) (https://linkedin.com/in/iam-aryandas)
 
 ---
 
 ## License
+
 This project is licensed under the Apache License, Version 2.0. See the [LICENSE](file:///d:/Projects_New/Windows%20Hello%20Refined/LICENSE) file for the full license text.

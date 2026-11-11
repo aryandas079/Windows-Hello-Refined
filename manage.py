@@ -23,8 +23,8 @@ def main():
     print("  5. Start Walk-Away Auto-Lock (Presence Guard)")
     print("  6. Register Native Windows Lock Screen Credential Provider")
     print("  7. Unregister Credential Provider")
-    print("  8. Install Automatic Boot/Restart Startup Service (Run on Power-On)")
-    print("  9. Remove Boot/Restart Startup Service")
+    print("  8. Run All-in-One Installer (install.bat)")
+    print("  9. Run All-in-One Uninstaller (uninstall.bat)")
     print(" 10. Clean Lock Screen (Remove News, Fun Facts, Tips & Widgets)")
     print(" 11. Preview Transparent Windows Hello HTML/SVG Animation")
     print("  0. Exit")
@@ -51,11 +51,12 @@ def main():
         subprocess.run(["regsvr32", "/u", "/s", dll_path])
         print("[-] Credential Provider unregistered.")
     elif choice == "8":
-        bat_path = os.path.abspath("install_startup.bat")
+        bat_path = os.path.abspath("install.bat")
         print(f"Launching installer: {bat_path}")
         subprocess.run(["cmd", "/c", bat_path])
     elif choice == "9":
-        bat_path = os.path.abspath("uninstall_startup.bat")
+        bat_path = os.path.abspath("uninstall.bat")
+        print(f"Launching uninstaller: {bat_path}")
         subprocess.run(["cmd", "/c", bat_path])
     elif choice == "10":
         subprocess.run([python_exe, "clean_lockscreen.py"])

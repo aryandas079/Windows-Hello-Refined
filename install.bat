@@ -1,62 +1,163 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
+title Windows Hello Refined - Complete Installer
 
-echo ================================================================
-echo  Windows Hello Refined - Lock Screen Installer
-echo ================================================================
+:: Ensure working directory is the script directory
+cd /d "%~dp0"
+
+:: 1. Check for Administrator privileges; auto-elevate if not admin
+net session >nul 2>&1
+if %errorLevel% neq 0 (
+    echo ===================================================================
+    echo [!] Administrator privileges required.
+    echo     Requesting elevation via User Account Control [UAC]...
+    echo ===================================================================
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process cmd.exe -ArgumentList '/c \"\"%~f0\"\"' -Verb RunAs" 2>nul
+    if %errorLevel% neq 0 (
+        echo.
+        echo [!] Automatic elevation could not be initiated.
+        echo     Please right-click 'install.bat' and select 'Run as administrator'.
+        echo.
+        pause
+    )
+    exit /b
+)
+
+cls
+echo ===================================================================
+echo             WINDOWS HELLO REFINED - ALL-IN-ONE INSTALLER
+echo                        Made by Aryan Das
+echo          GitHub:   https://github.com/aryandas079 (@aryandas079)
+echo          LinkedIn: https://linkedin.com/in/iam-aryandas (@iam-aryandas)
+echo ===================================================================
 echo.
 
-set "ROOT=%~dp0"
-set "ROOT=%ROOT:~0,-1%"
-set "DLL=%ROOT%\credential_provider\FaceCredentialProvider.dll"
-set "PYTHON=%ROOT%\.venv\Scripts\pythonw.exe"
-set "SERVICE_SCRIPT=%ROOT%\service\face_service.py"
+set "PROJ_DIR=%~dp0"
+if "%PROJ_DIR:~-1%"=="\" set "PROJ_DIR=%PROJ_DIR:~0,-1%"
+
+set "PYTHON=%PROJ_DIR%\.venv\Scripts\python.exe"
+set "PYTHONW=%PROJ_DIR%\.venv\Scripts\pythonw.exe"
+set "SERVICE_PY=%PROJ_DIR%\service\face_service.py"
+set "DLL=%PROJ_DIR%\credential_provider\FaceCredentialProvider.dll"
 set "GUID={C85B5F30-5B1D-4A4A-8A87-3E3F45E412A8}"
 
-echo [1/5] Stopping previous instances...
-taskkill /F /IM pythonw.exe >nul 2>&1
-echo       OK.
-echo.
-
-echo [2/5] Building native Credential Provider DLL...
-call "%ROOT%\credential_provider\build.bat"
-if not exist "%DLL%" (
-    echo [ERROR] DLL build failed.
-    pause
-    exit /b 1
+:: ---------------------------------------------------------------------
+:: Step 1/5: Check / Prepare Python Environment
+:: ---------------------------------------------------------------------
+echo [*] [1/5] Verifying Python and dependencies...
+if not exist "%PYTHON%" (
+    echo       Virtual environment [.venv] not found. Checking system Python...
+    where python >nul 2>&1
+    if !errorLevel! neq 0 (
+        echo [ERROR] Python 3.10+ is required but not installed or not in PATH.
+        echo Please install Python from https://www.python.org/ or Windows Store and run install.bat again.
+        echo.
+        pause
+        exit /b 1
+    )
+    echo       Creating virtual environment [.venv]...
+    python -m venv "%PROJ_DIR%\.venv"
+    if !errorLevel! neq 0 (
+        echo [ERROR] Failed to create virtual environment [.venv].
+        echo.
+        pause
+        exit /b 1
+    )
+    echo       Installing required dependencies from requirements.txt...
+    "%PROJ_DIR%\.venv\Scripts\pip.exe" install -r "%PROJ_DIR%\requirements.txt"
+    if !errorLevel! neq 0 (
+        echo [ERROR] Failed to install dependencies.
+        echo.
+        pause
+        exit /b 1
+    )
 )
-echo       OK: %DLL%
+echo       Python environment ready.
 echo.
 
-echo [3/5] Registering credential provider...
+:: ---------------------------------------------------------------------
+:: Step 2/5: Face Biometric Enrollment, Windows Hello PIN & Lock Screen
+:: ---------------------------------------------------------------------
+echo [*] [2/5] Setting up Face Biometrics, Windows Hello PIN, and Lock Screen...
+echo       A camera window will open. Follow the on-screen head-turn prompts.
+echo.
+"%PYTHON%" "%PROJ_DIR%\setup_face.py"
+if %errorLevel% neq 0 (
+    echo.
+    echo [ERROR] Setup was cancelled or failed. Installation aborted.
+    echo.
+    pause
+    exit /b %errorLevel%
+)
+echo.
+
+:: ---------------------------------------------------------------------
+:: Step 3/5: Register Native Credential Provider DLL
+:: ---------------------------------------------------------------------
+echo [*] [3/5] Registering Credential Provider into Windows Logon...
+if not exist "%DLL%" (
+    echo       Building Credential Provider DLL...
+    call "%PROJ_DIR%\credential_provider\build.bat"
+    if not exist "%DLL%" (
+        echo [ERROR] Build failed. Could not find %DLL%.
+        echo.
+        pause
+        exit /b 1
+    )
+)
+
 regsvr32 /s "%DLL%"
 
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\%GUID%" /ve /d "WindowsHelloRefined" /f >nul
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\%GUID%" /v "Disabled" /t REG_DWORD /d 0 /f >nul
 reg add "HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\%GUID%" /ve /d "WindowsHelloRefined" /f >nul
-echo       OK: Credential provider registered in Windows LogonUI.
+echo       Credential provider registered in Windows LogonUI.
 echo.
 
-echo [4/5] Configuring background service auto-start...
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "WindowsHelloRefinedService" /t REG_SZ /d "\"%PYTHON%\" \"%SERVICE_SCRIPT%\"" /f >nul
-echo       OK: Startup key registered in HKCU.
+:: ---------------------------------------------------------------------
+:: Step 4/5: Configure Automatic Startup (Boot, Restart, and User Logon)
+:: ---------------------------------------------------------------------
+echo [*] [4/5] Configuring automatic background startup...
+taskkill /F /IM pythonw.exe >nul 2>&1
+
+:: Register Windows Scheduled Task to run at system boot
+schtasks /create /tn "WindowsHelloRefinedDaemon" /tr "\"%PYTHONW%\" \"%SERVICE_PY%\"" /sc onstart /ru "SYSTEM" /rl highest /f >nul 2>&1
+
+:: Register HKCU Run key for user logon redundancy
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "WindowsHelloRefinedService" /t REG_SZ /d "\"%PYTHONW%\" \"%SERVICE_PY%\"" /f >nul
+echo       Boot startup task and user logon startup configured.
 echo.
 
-echo [5/5] Starting face service in background...
-start "" "%PYTHON%" "%SERVICE_SCRIPT%"
-echo       OK: Face service is active.
+:: ---------------------------------------------------------------------
+:: Step 5/5: Start Face Service in Background
+:: ---------------------------------------------------------------------
+echo [*] [5/5] Starting face service daemon in background...
+start "" "%PYTHONW%" "%SERVICE_PY%"
+echo       Background service is now active and listening.
 echo.
 
-echo ================================================================
-echo  Installation Successful!
-echo ================================================================
+:: ---------------------------------------------------------------------
+:: Installation Summary
+:: ---------------------------------------------------------------------
+echo ===================================================================
+echo                     INSTALLATION SUCCESSFUL!
+echo ===================================================================
 echo.
-echo  - Camera is IDLE (LED is completely OFF when not verifying)
-echo  - When screen locks (Win+L), camera turns on ONLY to scan your face
-echo  - Smooth native Windows Hello animation appears at top-center
-echo  - PIN and Password remain available under Sign-in options
-echo  - Camera turns OFF immediately after verification finishes
+echo What was configured:
+echo   1. Face biometric profile enrolled with liveness verification.
+echo   2. Windows Hello PIN encrypted locally via Windows DPAPI.
+echo   3. Ambient Windows Hello face overlay integrated with lock screen.
+echo   4. Credential Provider registered without cluttering sign-in tiles.
+echo   5. Automatic boot-time service scheduled for instant startup.
+echo   6. Camera turns ON only to verify face and turns OFF immediately.
 echo.
-echo  Press Win+L to test!
+echo Test it right now:
+echo   Press [Win + L] to lock your screen!
+echo.
+echo For support or updates:
+echo   Author:   Aryan Das
+echo   GitHub:   https://github.com/aryandas079 (@aryandas079)
+echo   LinkedIn: https://linkedin.com/in/iam-aryandas (@iam-aryandas)
+echo ===================================================================
 echo.
 pause

@@ -160,18 +160,17 @@ def main():
         cap.release()
         cv2.destroyAllWindows()
 
-    # ── Optional: Save Windows password for automatic lock screen unlock ───
-    print("\n" + "-" * 65)
-    print("  WINDOWS AUTO-UNLOCK (OPTIONAL)")
-    print("  To automatically unlock your screen when your face is recognized,")
-    print("  enter your Windows password once (encrypted with Windows DPAPI).")
-    print("  If you press Enter without typing a password, Face ID will verify")
-    print("  and allow you to click 'Unlock' or enter your PIN as usual.")
-    print("-" * 65)
+    # ── Windows Hello PIN for automatic lock screen unlock ───────────
+    print("\n" + "=" * 68)
+    print("            WINDOWS HELLO PIN CONFIGURATION (REQUIRED)")
+    print("  To automatically enter your PIN and unlock your workstation when")
+    print("  your face matches, please enter your Windows Hello PIN once.")
+    print("  Your PIN is encrypted locally with Windows DPAPI (Local Machine).")
+    print("=" * 68)
 
     try:
-        from save_password import main as save_password_main
-        save_password_main()
+        from save_pin import main as save_pin_main
+        save_pin_main()
     except Exception as e:
         print(f"[*] Note: {e}")
 
@@ -183,41 +182,9 @@ def main():
         return 1
 
     print(f"[+] Loaded verified profile with {len(test_profile['embeddings'])} embeddings.")
-
-    # ── Configure Windows auto-start for background service ───────────
-    print("\n[*] Configuring background face service auto-start...")
-    pythonw_exe = os.path.join(BASE_DIR, ".venv", "Scripts", "pythonw.exe")
-    service_py = os.path.join(BASE_DIR, "service", "face_service.py")
-
-    try:
-        import winreg
-        key = winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER,
-            r"Software\Microsoft\Windows\CurrentVersion\Run",
-            0,
-            winreg.KEY_SET_VALUE
-        )
-        cmd_val = f'"{pythonw_exe}" "{service_py}"'
-        winreg.SetValueEx(key, "WindowsHelloRefinedService", 0, winreg.REG_SZ, cmd_val)
-        winreg.CloseKey(key)
-        print("[+] Registered in Windows Startup (HKCU Run).")
-    except Exception as e:
-        print(f"[!] Warning registering startup: {e}")
-
-    # ── Start background service now ──────────────────────────────────
-    print("[*] Starting background service...")
-    try:
-        DETACHED_PROCESS = 0x00000008
-        CREATE_NEW_PROCESS_GROUP = 0x00000200
-        subprocess.Popen(
-            [pythonw_exe, "-u", service_py],
-            cwd=BASE_DIR,
-            creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
-            close_fds=True
-        )
-        print("[+] Background service is active and listening.")
-    except Exception as e:
-        print(f"[!] Error starting service: {e}")
+    user, creds = load_credentials()
+    if creds and creds.get("pin"):
+        print(f"[+] Verified Windows Hello PIN protection for user [{user}].")
 
     # ── Optional: Clean lock screen suggestions & widgets ────────────
     print("\n" + "=" * 68)
@@ -229,15 +196,6 @@ def main():
         except Exception as e:
             print(f"[!] Note: {e}")
 
-    print("\n" + "=" * 65)
-    print("   WINDOWS HELLO REFINED IS READY!")
-    print("=" * 65)
-    print(" - Your face is enrolled.")
-    print(" - You NEVER need to run setup again.")
-    print(" - Press [Win + L] to lock your screen.")
-    print(" - Simply look at your camera to unlock instantly!")
-    print(" - Windows PIN remains available at all times.")
-    print("=" * 65 + "\n")
     return 0
 
 if __name__ == "__main__":
