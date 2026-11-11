@@ -12,14 +12,7 @@ if %errorLevel% neq 0 (
     echo [!] Administrator privileges required.
     echo     Requesting elevation via User Account Control [UAC]...
     echo ===================================================================
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process cmd.exe -ArgumentList '/c \"\"%~f0\"\"' -Verb RunAs" 2>nul
-    if %errorLevel% neq 0 (
-        echo.
-        echo [!] Automatic elevation could not be initiated.
-        echo     Please right-click 'install.bat' and select 'Run as administrator'.
-        echo.
-        pause
-    )
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
     exit /b
 )
 

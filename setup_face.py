@@ -182,9 +182,9 @@ def main():
         return 1
 
     print(f"[+] Loaded verified profile with {len(test_profile['embeddings'])} embeddings.")
-    user, creds = load_credentials()
+    creds = load_credentials()
     if creds and creds.get("pin"):
-        print(f"[+] Verified Windows Hello PIN protection for user [{user}].")
+        print(f"[+] Verified Windows Hello PIN protection for user [{creds.get('username', username)}].")
 
     # ── Optional: Clean lock screen suggestions & widgets ────────────
     print("\n" + "=" * 68)

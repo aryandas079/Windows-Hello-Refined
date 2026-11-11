@@ -12,14 +12,7 @@ if %errorLevel% neq 0 (
     echo [!] Administrator privileges required.
     echo     Requesting elevation via User Account Control [UAC]...
     echo ===================================================================
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process cmd.exe -ArgumentList '/c \"\"%~f0\"\"' -Verb RunAs" 2>nul
-    if %errorLevel% neq 0 (
-        echo.
-        echo [!] Automatic elevation could not be initiated.
-        echo     Please right-click 'uninstall.bat' and select 'Run as administrator'.
-        echo.
-        pause
-    )
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
     exit /b
 )
 
@@ -74,9 +67,10 @@ echo.
 echo [*] [4/4] Biometric and security data cleanup:
 set /p "DEL_DATA=Do you want to permanently delete saved face biometrics and PIN? [y/N]: "
 if /i "!DEL_DATA!"=="Y" (
-    if exist "%PROJ_DIR%\data\profile.enc" del /f /q "%PROJ_DIR%\data\profile.enc" >nul 2>&1
+    if exist "%PROJ_DIR%\data\face_profile.enc" del /f /q "%PROJ_DIR%\data\face_profile.enc" >nul 2>&1
     if exist "%PROJ_DIR%\data\credentials.enc" del /f /q "%PROJ_DIR%\data\credentials.enc" >nul 2>&1
     if exist "%PROJ_DIR%\data\config.json" del /f /q "%PROJ_DIR%\data\config.json" >nul 2>&1
+    if exist "%PROJ_DIR%\data\*.log" del /f /q "%PROJ_DIR%\data\*.log" >nul 2>&1
     echo       Saved biometric data and PIN have been deleted.
 ) else (
     echo       Saved data retained in data\ folder.
