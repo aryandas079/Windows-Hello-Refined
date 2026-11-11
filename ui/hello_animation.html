@@ -1,250 +1,281 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Windows Hello Animation</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<meta charset="UTF-8">
+<title>Windows Hello</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
 
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100vw;
+    height: 100vh;
+    background: transparent !important;
+    background-color: transparent !important;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-app-region: no-drag;
+    user-select: none;
+  }
 
-    html, body {
-      width: 100vw;
-      height: 100vh;
-      background: transparent !important;
-      background-color: transparent !important;
-      overflow: hidden;
-      user-select: none;
-      -webkit-user-select: none;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
+  #main-ctr {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+  }
 
-    #main-ctr {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      text-align: center;
-      opacity: 0;
-    }
+  svg {
+    /* viewBox="0 0 294 241" rendered at 200px wide */
+    width: 200px;
+    height: auto;
+    overflow: visible;
+    filter: drop-shadow(0 2px 12px rgba(0,0,0,0.45));
+  }
 
-    svg {
-      width: 200px;
-      height: 164px;
-      overflow: visible;
-      filter: drop-shadow(0 2px 8px rgba(0,0,0,0.35));
-    }
+  /*
+   * IMPORTANT: transform-box:fill-box + transform-origin:center
+   * works correctly ONLY on leaf elements (path, circle, rect).
+   * Never use fill-box on a <g> group — the bounding box shifts the pivot.
+   * For <g> we rely on GSAP's svgOrigin / transformOrigin in SVG units.
+   */
+  #eye-left,
+  #eye-right,
+  #scan-eye {
+    transform-box: fill-box;
+    transform-origin: center;
+  }
 
-    /* 
-      SVG viewBox: 0 0 294 241
-      Face center: (148, 120)
-
-      SCANNING STATE elements:
-        - #scan-arc  : top scanning arc (the upward arch)
-        - #scan-eye  : single large circle centered at face center
-
-      SMILE STATE elements (after spin):
-        - #smile-arc : bottom smile curve
-        - #eye-left  : small left eye circle
-        - #eye-right : small right eye circle
-
-      The #spin-group contains BOTH arcs stacked;
-      it starts rotated 180° so top arc shows, then spins 900°
-      to end at 0° where the bottom arc is correct.
-    */
-
-    /* Spin group pivots around the face center */
-    #spin-group {
-      transform-box: fill-box;
-      transform-origin: 148px 120px;
-    }
-
-    #eye-left {
-      transform-box: fill-box;
-      transform-origin: center;
-    }
-
-    #eye-right {
-      transform-box: fill-box;
-      transform-origin: center;
-    }
-
-    #scan-eye {
-      transform-box: fill-box;
-      transform-origin: center;
-    }
-
-    .hello-text {
-      color: #FFFFFF;
-      letter-spacing: 2px;
-      font-size: 22px;
-      font-weight: 300;
-      font-family: "Segoe UI", "Roboto", -apple-system, BlinkMacSystemFont, sans-serif;
-      margin-top: 14px;
-      text-shadow: 0 2px 10px rgba(0,0,0,0.6);
-      opacity: 0;
-    }
-  </style>
+  .hello-text {
+    color: #FFFFFF;
+    font-family: "Segoe UI", "Roboto", -apple-system, sans-serif;
+    font-size: 22px;
+    font-weight: 300;
+    letter-spacing: 2.5px;
+    margin-top: 16px;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.6);
+    opacity: 0;
+    white-space: nowrap;
+  }
+</style>
 </head>
 <body>
 
 <div id="main-ctr">
+  <!--
+    SVG coordinate system: viewBox 0 0 294 241
+    Face visual center: (148, 120)
+
+    ELEMENT LAYOUT
+    ══════════════
+    #spin-group  <g>  — holds the arc path; rotated around (148,120) SVG coords
+      #arc-path  — the bottom-smile cubic-bezier (original Windows Hello path)
+                   At rotation=180° → arc appears at TOP  → "scanning arc" (Image 2)
+                   At rotation=0°  → arc appears at BOTTOM → smile           (Image 1 & 3)
+
+    #scan-eye   <circle cx=148 cy=145 r=42>  — big eye during scanning phase (Image 2)
+    #eye-left   <circle cx=103 cy=110 r=21>  — small left eye after spin      (Image 1 & 3)
+    #eye-right  <circle cx=193 cy=110 r=21>  — small right eye / wink eye     (Image 1 & 3)
+  -->
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 294 241">
     <g fill="none">
 
-      <!--
-        SPIN GROUP — contains the bottom smile arc.
-        Initial rotation = 180° → arc appears at TOP (scanning arc, Image 2).
-        After 900° spin → 180+900 = 1080° → mod 360 = 0° → arc at BOTTOM (smile, Image 1).
-      -->
+      <!-- ── THE SPINNING ARC ── -->
       <g id="spin-group">
-        <!-- Bottom smile arc (the actual smile curve) -->
-        <path id="smile-arc"
+        <!--
+          Original Windows Hello bottom-smile path (verbatim from official animation).
+          stroke-linecap="round" gives the thick rounded ends.
+        -->
+        <path id="arc-path"
           stroke="#FFFFFF"
           stroke-width="30"
           stroke-linecap="round"
           fill="none"
-          d="M57 167 Q148 230 239 167"
+          d="M238.843 166
+             c-15.863 34.268-50.554 58.04-90.797 58.04
+             -39.62 0-73.857-23.04-90.046-56.453"
         />
       </g>
 
       <!--
-        SCANNING EYE — large single circle visible during scanning phase only.
-        Centered at the face center (148, 130). Hidden after spin begins.
-        Matches Image 2: big round "iris" below the top scanning arc.
+        SCANNING EYE — large white circle.
+        Visible only while arc is at top (scanning phase).
+        Position: face center (148,145), radius 42.
+        Hides before / during the spin.
       -->
       <circle id="scan-eye"
-        cx="148" cy="134"
-        r="38"
+        cx="148" cy="145" r="42"
         fill="#FFFFFF"
         opacity="0"
       />
 
       <!--
-        SMILE EYES — two small circles, hidden until after the spin.
-        Matches Image 1 and Image 3.
-        Left eye ~(106, 112), Right eye ~(190, 112), radius ~20.
+        SMILE EYES — two smaller white circles.
+        Appear after the spin settles (happy face phase).
+        Left:  (103, 110) r=21
+        Right: (191, 110) r=21
       -->
       <circle id="eye-left"
-        cx="106" cy="112"
-        r="20"
+        cx="103" cy="110" r="21"
         fill="#FFFFFF"
         opacity="0"
       />
       <circle id="eye-right"
-        cx="190" cy="112"
-        r="20"
+        cx="191" cy="110" r="21"
         fill="#FFFFFF"
         opacity="0"
       />
 
     </g>
   </svg>
+
   <p class="hello-text" id="hello-text">Hello, Aryan</p>
 </div>
 
+<!-- GSAP bundled locally — works even without internet in pywebview -->
 <script>
-  /* ── Username injection from Python ── */
-  function setUsername(name) {
-    document.getElementById("hello-text").textContent = "Hello, " + name;
+/* ─────────────────────────────────────────────────────────────
+   Inline GSAP from local file content injected by show_hello.py,
+   OR fall back to loading from path if opened directly in browser.
+   ───────────────────────────────────────────────────────────── */
+</script>
+<script src="gsap.min.js" onerror="
+  var s=document.createElement('script');
+  s.src='https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js';
+  document.head.appendChild(s);
+"></script>
+
+<script>
+/* ── Username injection ── */
+function setUsername(name) {
+  document.getElementById('hello-text').textContent = 'Hello, ' + name;
+}
+
+/* ── Wait for GSAP to be ready ── */
+function startAnimation() {
+  if (typeof gsap === 'undefined') {
+    setTimeout(startAnimation, 50);
+    return;
   }
 
-  /* ── Reference elements ── */
-  var mainCtr   = document.getElementById("main-ctr");
-  var spinGroup = document.getElementById("spin-group");
-  var scanEye   = document.getElementById("scan-eye");
-  var eyeLeft   = document.getElementById("eye-left");
-  var eyeRight  = document.getElementById("eye-right");
-  var helloText = document.getElementById("hello-text");
+  var mainCtr   = document.getElementById('main-ctr');
+  var spinGroup = document.getElementById('spin-group');
+  var scanEye   = document.getElementById('scan-eye');
+  var eyeLeft   = document.getElementById('eye-left');
+  var eyeRight  = document.getElementById('eye-right');
+  var helloText = document.getElementById('hello-text');
 
-  /* ── Build timeline ── */
-  function buildTimeline() {
-    var tl = gsap.timeline({ repeat: -1, repeatDelay: 0.5, delay: 0.1 });
+  /* ─────────────────────────────────────────────────────
+     TIMELINE
+     ─────────────────────────────────────────────────────
+     Labels:
+       "scan"   : scanning arc+eye visible
+       "spin"   : arc rotating 900°, big eye fading out
+       "face"   : smiley settled, small eyes popping in
+       "wink"   : right eye closes/opens
+       "text"   : greeting appears
+       "out"    : fade to black
+     ───────────────────────────────────────────────────── */
+  var tl = gsap.timeline({
+    repeat: -1,
+    repeatDelay: 0.4,
+    delay: 0.1,
+    defaults: { ease: 'power2.out' }
+  });
 
-    /* ── RESET / INITIAL STATE ── */
-    tl.set(mainCtr,   { opacity: 0 })
-      .set(helloText, { opacity: 0 })
-      .set(spinGroup, { rotation: 180, transformOrigin: "148px 120px" })   // arc points UP
-      .set(scanEye,   { opacity: 0, scale: 0.4 })
-      .set(eyeLeft,   { opacity: 0, scale: 0.3 })
-      .set(eyeRight,  { opacity: 0, scale: 0.3 })
+  /* ══ RESET — start of every loop ══ */
+  tl
+    .set(mainCtr,   { opacity: 0 })
+    .set(helloText, { opacity: 0 })
+    /* Arc starts at 180° → bottom-smile rotated upward = top scanning arc */
+    .set(spinGroup, { rotation: 180, svgOrigin: '148 120' })
+    .set(scanEye,   { opacity: 0, scale: 0.2 })
+    .set(eyeLeft,   { opacity: 0, scale: 0.1 })
+    .set(eyeRight,  { opacity: 0, scale: 0.1 })
 
-    /* ── PHASE 1: Fade in ── */
-      .to(mainCtr, { duration: 0.3, opacity: 1, ease: "power2.out" })
+  /* ══ PHASE 1 — Fade in (0.3 s) ══ */
+    .to(mainCtr, { duration: 0.3, opacity: 1 })
 
-    /* ── PHASE 2: Scanning — show top arc + big eye ── */
-      .to(scanEye, {
-        duration: 0.3,
-        opacity: 1,
-        scale: 1,
-        ease: "back.out(1.5)"
-      })
+  /* ══ PHASE 2 — SCANNING: big eye pops up under the top arc (0.35 s) ══
+       This creates Image 2: upward arc + large circle = face being scanned */
+    .to(scanEye, {
+      duration: 0.35,
+      opacity: 1,
+      scale: 1,
+      ease: 'back.out(1.6)'
+    })
 
-    /* ── PHASE 3: Hold scanning for a moment ── */
-      .to({}, { duration: 0.35 })   // pause — scanning
+  /* ══ Hold scanning pose so user clearly sees it (0.55 s) ══ */
+    .to({}, { duration: 0.55 })
 
-    /* ── PHASE 4: Spin 900° (arc sweeps from top → settles at bottom as smile) ──
-        Simultaneously the scan eye fades out as the spin begins. ── */
-      .to(scanEye, {
-        duration: 0.3,
-        opacity: 0,
-        scale: 0.3,
-        ease: "power2.in"
-      })
-      .to(spinGroup, {
-        duration: 1.0,
-        rotation: 1080,                        // 180 + 900 = 1080 → mod 360 = 0° (smile at bottom)
-        transformOrigin: "148px 120px",
-        ease: "circ.inOut"
-      }, "<")                                  // "<" = same time as scanEye fade
+  /* ══ PHASE 3 — SPIN + BIG EYE FADE (1.1 s) ══
+       Arc sweeps 900° from 180° → 1080° (= 0° mod 360) → smile at bottom.
+       Big scan-eye fades out simultaneously. */
+    .to(scanEye, {
+      duration: 0.35,
+      opacity: 0,
+      scale: 0.2,
+      ease: 'power3.in'
+    })
+    .to(spinGroup, {
+      duration: 1.1,
+      rotation: 1080,       /* 180 + 900 = 1080 → mod 360 = 0° → bottom smile ✓ */
+      svgOrigin: '148 120', /* pivot = face center in SVG coordinates */
+      ease: 'circ.inOut'
+    }, '<')                 /* '<' = same start time as scanEye fade */
 
-    /* ── PHASE 5: Smiley — two eyes pop in ── */
-      .to(eyeLeft, {
-        duration: 0.3,
-        opacity: 1,
-        scale: 1,
-        ease: "back.out(2)"
-      }, "-=0.15")
-      .to(eyeRight, {
-        duration: 0.3,
-        opacity: 1,
-        scale: 1,
-        ease: "back.out(2)"
-      }, "-=0.26")
+  /* ══ PHASE 4 — SMILEY EYES bounce in (0.3 s each, staggered) ══
+       Creates Image 1: bottom smile + two small round eyes */
+    .to(eyeLeft, {
+      duration: 0.3,
+      opacity: 1,
+      scale: 1,
+      ease: 'back.out(2.8)'
+    }, '-=0.08')
+    .to(eyeRight, {
+      duration: 0.3,
+      opacity: 1,
+      scale: 1,
+      ease: 'back.out(2.8)'
+    }, '-=0.22')
 
-    /* ── PHASE 6: THE WINK (right eye) ── */
-      .to(eyeRight, {
-        duration: 0.12,
-        scaleY: 0.08,
-        ease: "power3.in"
-      }, "+=0.25")
-      .to(eyeRight, {
-        duration: 0.18,
-        scaleY: 1,
-        ease: "back.out(2.5)"
-      })
+  /* ══ PHASE 5 — WINK right eye (0.1 s close + 0.2 s open) ══
+       Creates Image 3: left eye round, right eye = flat horizontal slit */
+    .to(eyeRight, {
+      duration: 0.10,
+      scaleY: 0.06,
+      ease: 'power4.in'
+    }, '+=0.3')
+    .to(eyeRight, {
+      duration: 0.20,
+      scaleY: 1,
+      ease: 'back.out(3)'
+    })
 
-    /* ── PHASE 7: "Hello, Name" appears ── */
-      .to(helloText, {
-        duration: 0.35,
-        opacity: 1,
-        ease: "power2.out"
-      }, "-=0.15")
+  /* ══ PHASE 6 — Greeting text fades in ══ */
+    .to(helloText, {
+      duration: 0.35,
+      opacity: 1,
+      ease: 'power2.out'
+    }, '-=0.12')
 
-    /* ── PHASE 8: Hold, then fade out ── */
-      .to(mainCtr, {
-        delay: 1.6,
-        duration: 0.55,
-        opacity: 0,
-        ease: "power2.in"
-      });
+  /* ══ PHASE 7 — Hold 1.6 s, then fade the whole thing out ══ */
+    .to(mainCtr, {
+      delay: 1.6,
+      duration: 0.55,
+      opacity: 0,
+      ease: 'power2.in'
+    });
+}
 
-    return tl;
-  }
-
-  buildTimeline();
+/* Start after DOM is painted */
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', startAnimation);
+} else {
+  startAnimation();
+}
 </script>
 
 </body>
