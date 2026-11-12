@@ -348,13 +348,15 @@ void FaceOverlay::RunAnimation()
         int dlgW = rc.right - rc.left;
         int dlgH = rc.bottom - rc.top;
 
-        // Position flush across the entire visible width of the CredUI dialog
-        // to completely mask any native card borders or outlines while covering
-        // the 9-dot blue PIN logo and "Enter your PIN" cleanly without seams
-        posX = rc.left;
-        posY = rc.top + (int)(dlgH * 0.35);
-        winW = dlgW;
-        winH = (int)(dlgH * 0.19);
+        // Position overlay with a 1px horizontal inset so the native dialog border
+        // is never overwritten or notched (preventing black edge artifacts on the sides),
+        // and start from dlgH * 0.28 to dlgH * 0.50 (height dlgH * 0.22) so that ALL rows
+        // of the 9-dot PIN logo and "Enter your PIN" are completely covered seamlessly,
+        // without leaving any exposed top horizontal edges or clipping dots.
+        posX = rc.left + 1;
+        posY = rc.top + (int)(dlgH * 0.28);
+        winW = (dlgW > 2) ? (dlgW - 2) : dlgW;
+        winH = (int)(dlgH * 0.22);
         LogOverlay(L"CredUI dialog scenario: attached replacement overlay (%d,%d %dx%d)", posX, posY, winW, winH);
     }
     else
@@ -510,10 +512,10 @@ void FaceOverlay::RunAnimation()
             {
                 int dlgW = rcSec.right - rcSec.left;
                 int dlgH = rcSec.bottom - rcSec.top;
-                int targetX = rcSec.left;
-                int targetY = rcSec.top + (int)(dlgH * 0.35);
-                int targetW = dlgW;
-                int targetH = (int)(dlgH * 0.19);
+                int targetX = rcSec.left + 1;
+                int targetY = rcSec.top + (int)(dlgH * 0.28);
+                int targetW = (dlgW > 2) ? (dlgW - 2) : dlgW;
+                int targetH = (int)(dlgH * 0.22);
 
                 if (targetX != posX || targetY != posY || targetW != winW || targetH != winH)
                 {
