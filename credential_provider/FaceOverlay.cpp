@@ -342,12 +342,12 @@ void FaceOverlay::RunAnimation()
         int dlgW = rc.right - rc.left;
         int dlgH = rc.bottom - rc.top;
 
-        // Position strictly below horizontal separator line (dlgH * 0.38)
-        // and above the user email address (dlgH * 0.60)
-        winW = dlgW - 64;
-        winH = (int)(dlgH * 0.20);
-        posX = rc.left + 32;
-        posY = rc.top + (int)(dlgH * 0.39);
+        // Position strictly over the 9-dot blue PIN logo and "Enter your PIN"
+        // spanning full content width (dlgW - 40) from rc.left + 20 to completely cover tile borders and outlines
+        winW = dlgW - 40;
+        winH = (int)(dlgH * 0.23);
+        posX = rc.left + 20;
+        posY = rc.top + (int)(dlgH * 0.30);
         LogOverlay(L"CredUI dialog scenario: attached replacement overlay (%d,%d %dx%d)", posX, posY, winW, winH);
     }
     else
@@ -491,12 +491,31 @@ void FaceOverlay::RunAnimation()
             {
                 int dlgW = rcSec.right - rcSec.left;
                 int dlgH = rcSec.bottom - rcSec.top;
-                int targetX = rcSec.left + 32;
-                int targetY = rcSec.top + (int)(dlgH * 0.39);
-                if (targetX != posX || targetY != posY)
+                int targetX = rcSec.left + 20;
+                int targetY = rcSec.top + (int)(dlgH * 0.30);
+                int targetW = dlgW - 40;
+                int targetH = (int)(dlgH * 0.23);
+
+                if (targetX != posX || targetY != posY || targetW != winW || targetH != winH)
                 {
                     posX = targetX;
                     posY = targetY;
+                    if (targetW != winW || targetH != winH)
+                    {
+                        winW = targetW;
+                        winH = targetH;
+                        sz.cx = winW;
+                        sz.cy = winH;
+
+                        // Recreate DIB section dynamically for resizing
+                        SelectObject(hdcMem, hOldBitmap);
+                        DeleteObject(hBitmap);
+
+                        bmi.bmiHeader.biWidth = winW;
+                        bmi.bmiHeader.biHeight = -winH;
+                        hBitmap = CreateDIBSection(hdcScreen, &bmi, DIB_RGB_COLORS, &pBits, NULL, 0);
+                        hOldBitmap = (HBITMAP)SelectObject(hdcMem, hBitmap);
+                    }
                     ptDst.x = posX;
                     ptDst.y = posY;
                     SetWindowPos(m_hwnd, NULL, posX, posY, winW, winH, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW);
@@ -630,7 +649,7 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
     bool bLightTheme = false;
 
     float cx = width / 2.0f;
-    float cy = bIsCredUI ? 38.0f : 34.0f;
+    float cy = bIsCredUI ? 48.0f : 34.0f;
 
     if (bIsCredUI)
     {
@@ -731,8 +750,8 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
             sf.SetAlignment(Gdiplus::StringAlignmentCenter);
             sf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
 
-            float textY = bIsCredUI ? 76.0f : 82.0f;
-            float textH = 30.0f;
+            float textY = bIsCredUI ? 96.0f : 82.0f;
+            float textH = 34.0f;
             if (!bLightTheme)
             {
                 Gdiplus::RectF ts(0.0f, textY + 1.5f, (float)width, textH);
@@ -813,8 +832,8 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
         format.SetAlignment(Gdiplus::StringAlignmentCenter);
         format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
 
-        float textY = bIsCredUI ? 76.0f : 66.0f;
-        float textH = 30.0f;
+        float textY = bIsCredUI ? 96.0f : 66.0f;
+        float textH = 34.0f;
 
         if (!bLightTheme)
         {
@@ -846,7 +865,7 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
         format.SetAlignment(Gdiplus::StringAlignmentCenter);
         format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
 
-        float textY = bIsCredUI ? 82.0f : 78.0f;
+        float textY = bIsCredUI ? 96.0f : 78.0f;
         float textH = 32.0f;
 
         if (!bLightTheme)

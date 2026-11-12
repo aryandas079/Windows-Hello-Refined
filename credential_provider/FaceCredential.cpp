@@ -964,8 +964,16 @@ void FaceCredential::DoVerification()
                 HWND hwndDlgCheck = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
                 if (!hwndDlgCheck) hwndDlgCheck = FindWindowW(NULL, L"Windows Security");
                 if (!hwndDlgCheck) hwndDlgCheck = FindWindowW(L"Credential Dialog Xaml Host", NULL);
-                bool bIsCredUI = (hwndDlgCheck != NULL && IsWindowVisible(hwndDlgCheck)) || !IsLockScreenDesktop() ||
-                                 (m_cpus == CPUS_CREDUI || (int)m_cpus == 3 || (int)m_cpus == 4);
+                bool bLockScreenScenario =
+                    m_cpus == CPUS_UNLOCK_WORKSTATION ||
+                    m_cpus == CPUS_LOGON ||
+                    (int)m_cpus == 0 ||
+                    (int)m_cpus == 1;
+                bool bIsCredUI = !bLockScreenScenario &&
+                                 ((hwndDlgCheck != NULL && IsWindowVisible(hwndDlgCheck)) ||
+                                  m_cpus == CPUS_CREDUI ||
+                                  (int)m_cpus == 3 ||
+                                  (int)m_cpus == 4);
 
                 if (m_pProvider && !bIsCredUI)
                 {
