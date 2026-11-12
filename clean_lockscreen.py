@@ -37,7 +37,9 @@ def clear_spotlight_cache():
     if not local_app_data:
         return
     base = os.path.join(local_app_data, r"Packages\Microsoft.Windows.ContentDeliveryManager_cw5n1h2txyewy\LocalState")
-    cache_dirs = ["TargetedContentCache", "Tips", "ContentManagementSDK"]
+    # Keep TargetedContentCache: Windows may store the active lock-screen
+    # wallpaper there. Only remove promotional text and suggestion metadata.
+    cache_dirs = ["Tips", "ContentManagementSDK"]
     cleared = 0
     for d in cache_dirs:
         target = os.path.join(base, d)
@@ -71,7 +73,6 @@ def clean_lock_screen():
     # 1. ContentDeliveryManager: Suggestions, Tips, Spotlight text overlays
     cdm_key = r"Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
     tweaks_cdm = [
-        ("RotatingLockScreenEnabled", 1, "Spotlight Wallpaper Rotation"),
         ("RotatingLockScreenOverlayEnabled", 0, "Spotlight Fun Facts & Trivia"),
         ("SubscribedContent-338387Enabled", 0, "Tips, Tricks, and Suggestions"),
         ("SubscribedContent-338388Enabled", 0, "Spotlight Recommendations"),
@@ -134,8 +135,8 @@ def clean_lock_screen():
     set_reg_value(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP", "LockScreenWidgetsEnabled", 0)
     print("  [DONE] Enforce Machine Widgets Policies (Dsh & PersonalizationCSP)")
 
-    # 6. Keep wallpaper rotation available without restoring Spotlight overlays.
-    set_reg_value(winreg.HKEY_CURRENT_USER, cdm_key, "RotatingLockScreenEnabled", 1)
+    # 6. Preserve the user's current wallpaper source and disable only the
+    # Spotlight overlay layer that adds trivia and recommendations.
     set_reg_value(winreg.HKEY_CURRENT_USER, cdm_key, "RotatingLockScreenOverlayEnabled", 0)
     set_reg_value(winreg.HKEY_CURRENT_USER, cdm_key, "ContentDeliveryAllowed", 1)
 

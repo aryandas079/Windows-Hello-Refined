@@ -12,7 +12,7 @@ Created by **Aryan Das**
 - GitHub: [@aryandas079](https://github.com/aryandas079) (https://github.com/aryandas079)  
 - LinkedIn: [@iam-aryandas](https://linkedin.com/in/iam-aryandas) (https://linkedin.com/in/iam-aryandas)  
 
-It integrates directly into the genuine **Windows Lock Screen (`LogonUI.exe`)** using a native 64-bit C++ Windows Credential Provider, displaying the official-style animated gazing eye ("Looking for you...") that spins into a smile upon verification and unlocks straight to the desktop.
+It integrates directly into the genuine **Windows Lock Screen (`LogonUI.exe`)** using a native 64-bit C++ Windows Credential Provider. Before verification, the complete official-style animation appears in the top-center home area directly below the webcam, where the lock-screen clock is shown. After verification it displays a bold Segoe UI welcome message, fills the Windows Hello PIN, and unlocks.
 
 ---
 
@@ -24,9 +24,9 @@ The project combines low-level Windows operating system internals with modern de
 | Layer | Technologies Used | Description |
 | :--- | :--- | :--- |
 | **Biometric AI and Vision** | **OpenCV DNN**, **YuNet (2023mar)**, **SFace (2021dec)** | Lightweight CNNs for ultra-fast face detection (~15ms) and 128-dimensional feature embedding extraction (~35ms). |
-| **Anti-Spoofing and Liveness** | **Laplacian Texture Variance**, **YCrCb Chromaticity** | Filters out mobile screens, printed photos, and digital displays by detecting moire patterns and unnatural specular reflections. |
+| **Liveness and Diagnostics** | **Laplacian Texture Variance**, **YCrCb Chromaticity**, landmarks, depth | Provides diagnostic signals for screens, prints, and static-image spoofing analysis. |
 | **Lock Screen Integration** | **C++17**, **Windows Credential Provider SDK** (`ICredentialProviderCredential3`) | Native 64-bit DLL loaded directly by `LogonUI.exe` on the secure `Winlogon` desktop. |
-| **Visual Animation and HUD** | **Win32 Layered Windows**, **GDI+**, `BITMAPV5HEADER` | Transparent overlay rendered with per-pixel alpha compositing, featuring gazing eye tracking, 900-degree spin, wink, and drop shadows. |
+| **Visual Animation and HUD** | **Win32 Layered Windows**, **GDI+**, `BITMAPV5HEADER` | Transparent overlay in the lock-screen clock area, featuring gaze tracking, a 900-degree spin, wink, bold Segoe UI welcome text, and drop shadows. |
 | **Biometric and Credential Vault**| **Windows DPAPI** (`CryptProtectData` / `CryptUnprotectData`) | Hardware-backed cryptographic protection tied directly to the current user's Windows security descriptor. |
 | **Inter-Process Communication** | **Win32 Named Pipes** (`\\.\pipe\WindowsHelloRefinedPipe`) | Secure, high-throughput IPC between the lock screen credential provider and the background vision daemon. |
 | **Automated Unlock Engine** | **Win32 `SendInput`** (`KEYEVENTF_UNICODE`) | Types the DPAPI-secured Windows Hello PIN directly into the active logon desktop for instant TPM-verified unlock on Windows 11. |
@@ -38,15 +38,16 @@ The project combines low-level Windows operating system internals with modern de
 
 - **One-Click Installation and Removal**: Single `install.bat` sets up everything; single `uninstall.bat` cleanly removes everything.
 - **Standard RGB Camera Support**: Works on 720p/1080p laptop webcams and USB cameras without infrared.
-- **Native Lock Screen Animation**: Windows Hello-style animated gazing eye appears at the top center of the lock screen from the very beginning.
-- **Wallpaper and Clock Maintained**: The screen stays on the wallpaper and clock during verification; if verified, it slides up and unlocks; if not verified, it stays undisturbed until a key is tapped.
-- **Instant Unlock (~1.1s)**: Fast multi-stage verification pipeline with zero cold-start camera delay.
+- **Native Lock Screen Animation**: The complete “Looking for you...” animation appears in the top-center clock/home area, directly below the webcam, before the PIN section is shown.
+- **Verified Welcome Feedback**: After a match, the animation moves toward the PIN area and shows a clearly visible bold Segoe UI “Welcome, <username>” message before PIN entry.
+- **Wallpaper and Clock Maintained**: The transparent overlay does not replace the lock-screen wallpaper or clock. Cleanup disables promotional content while preserving the selected wallpaper and its cache.
+- **Fast Unlock**: Face matching returns as soon as a valid match is found, then the saved PIN is entered and submitted automatically.
 - **Windows 11 Passwordless Compliant**: Supports Microsoft Accounts (`DevicePasswordLessBuildVersion = 2`) via hardware-backed PIN simulation.
 - **Hidden from Sign-in Tiles**: Operates as an ambient background overlay without creating clutter or duplicate tiles under Sign-in options.
-- **Liveness Diagnostics**: Includes texture, color, landmark, and depth checks for diagnostics and future policy controls.
+- **Liveness Diagnostics**: Includes texture, color, landmark, and depth checks for diagnostics; the current fast unlock decision uses the configured face-match path.
 - **Hardware-Friendly**: Presence monitoring samples every 5 seconds and releases the camera between samples so the webcam LED turns off.
 - **Auto-Starts on Boot and Restart**: Automatically active when turning on your PC from shutdown or after rebooting.
-- **Lock Screen De-Cluttering**: Option during setup to disable Windows Spotlight news, fun facts, tips, and widgets.
+- **Lock Screen De-Cluttering**: Option during setup to disable Spotlight news, fun facts, tips, feeds, and widgets without deleting the active wallpaper cache.
 - **Walk-Away Auto-Lock**: While Windows is unlocked, the daemon samples the camera every 5 seconds and locks the workstation after the configured absence timeout.
 
 ---
@@ -72,7 +73,7 @@ The installer automatically guides you through the full onboarding:
 2. **Environment Setup**: Verifies Python 3.10+ and automatically sets up `.venv` with `requirements.txt`.
 3. **Face Biometric Enrollment**: Opens the camera HUD and captures 14 multi-angle samples (Look straight, Turn left, Turn right, Tilt/Smile).
 4. **Windows Hello PIN Setup**: Asks for your Windows Hello PIN once and encrypts it locally with Windows DPAPI.
-5. **Clean Lock Screen**: Asks whether to remove Windows Spotlight fun facts, “Like what you see?”/“Not for me” prompts, news, tips, feeds, detailed status apps, and MSN widgets while keeping the wallpaper and clock.
+5. **Clean Lock Screen**: Asks whether to remove Windows Spotlight fun facts, “Like what you see?”/“Not for me” prompts, news, tips, feeds, detailed status apps, and MSN widgets while preserving the wallpaper, clock, and wallpaper cache.
 6. **Credential Provider Registration**: Registers `FaceCredentialProvider.dll` with Windows LogonUI (`regsvr32`).
 7. **Boot-Time Startup Service**: Registers a Windows Scheduled Task (`WindowsHelloRefinedDaemon`) to automatically run on computer startup, restart, and login.
 8. **Service Startup**: Launches the background daemon immediately so you are ready to use it without rebooting.
@@ -80,8 +81,8 @@ The installer automatically guides you through the full onboarding:
 ### 3. Test It
 Press <kbd>Win</kbd> + <kbd>L</kbd> to lock your screen. Look at your camera to verify and unlock!
 
-If you choose **Y** for lock-screen cleanup during installation, Windows keeps the wallpaper and clock,
-but removes promotional suggestions, Spotlight trivia, feeds, widgets, and detailed status content.
+If you choose **Y** for lock-screen cleanup during installation, Windows keeps the current wallpaper and clock,
+preserves the wallpaper cache, and removes promotional suggestions, Spotlight trivia, feeds, widgets, and detailed status content.
 The saved PIN remains available internally so face verification can unlock automatically.
 
 ---
@@ -126,6 +127,7 @@ Options:
   9. Run All-in-One Uninstaller (uninstall.bat)
  10. Clean Lock Screen (Remove News, Fun Facts, Tips & Widgets)
  11. Preview Transparent Windows Hello HTML/SVG Animation
+  12. Set Face-Absence Auto-Lock Timeout
   0. Exit
 ```
 
@@ -136,7 +138,7 @@ Options:
 ```mermaid
 flowchart TD
     A["Lock Screen (LogonUI.exe)"] -->|Loads DLL| B["FaceCredentialProvider.dll"]
-    B -->|Displays Native Overlay| C["Animated Eye Overlay (Winlogon Desktop)"]
+    B -->|Displays Native Overlay| C["Top-Center Clock-Area Animation"]
     B -->|Sends VERIFY over Named Pipe| D["service/face_service.py"]
     D -->|Opens Camera| E["Webcam Hardware (Index 0)"]
     E -->|Captured Frame| F["FaceEngine (YuNet + SFace)"]
@@ -144,10 +146,10 @@ flowchart TD
     G -- No --> H["Screen stays on Clock & Wallpaper"]
     G -- Yes --> J["Decrypt PIN via Windows DPAPI"]
     J -->|Return verified + PIN| B
-    B -->|Plays Spin & Wink Animation| C
+    B -->|Moves Animation & Shows Bold Welcome| C
     B -->|SimulatePinInput via SendInput| K["Slide up curtain & Enter PIN"]
     K -->|TPM Authenticates| L["Windows Desktop Unlocked!"]
-    D -->|Release Camera| M["Webcam LED Turns Off Immediately"]
+    D -->|Release Camera After Each 5s Sample| M["Webcam LED Off Between Checks"]
 ```
 
 1. **Zero Cloud Dependencies**: 100% of detection, alignment, feature extraction, and matching runs entirely offline on your local machine.
@@ -168,7 +170,7 @@ Windows Hello Refined/
 │   ├── FaceCredential.cpp   # Credential tile logic & PIN auto-unlock simulation
 │   ├── FaceCredential.h     # ICredentialProviderCredential3 interface definitions
 │   ├── FaceCredentialProvider.cpp # Ambient overlay registration (0 sign-in tiles)
-│   ├── FaceOverlay.cpp      # Top-center animated layered window overlay
+│   ├── FaceOverlay.cpp      # Clock-area animation and verified welcome overlay
 │   ├── FaceOverlay.h        # Overlay state machine & GDI+ renderer
 │   └── FaceCredentialProvider.dll # Compiled 64-bit binary
 ├── engine/                  # Biometric detection & verification engine
@@ -180,8 +182,10 @@ Windows Hello Refined/
 │   └── face_recognition_sface_2021dec.onnx
 ├── service/                 # Background system services
 │   ├── face_service.py      # Named pipe IPC daemon and configurable presence auto-lock
+│   ├── presence_service.py  # Interactive-user 5-second camera pulse watcher
+│   ├── presence_config.py   # Auto-lock presets and persisted timeout
 │   └── session_guard.py     # Walk-away auto-lock presence monitor
-├── clean_lockscreen.py      # Lock screen de-clutter utility (removes trivia/widgets)
+├── clean_lockscreen.py      # De-clutter utility that preserves wallpaper assets
 ├── install.bat              # Single All-in-One installer (Setup + PIN + Clean + Register + Auto-Start)
 ├── manage.py                # Unified interactive CLI manager
 ├── README.md                # Documentation

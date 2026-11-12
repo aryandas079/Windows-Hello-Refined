@@ -847,7 +847,7 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
 
         // Status text below the face
         Gdiplus::FontFamily fontFamily(L"Segoe UI");
-        Gdiplus::Font font(&fontFamily, bIsCredUI ? 12.0f : 11.5f, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
+        Gdiplus::Font font(&fontFamily, bIsCredUI ? 13.0f : 15.0f, Gdiplus::FontStyleBold, Gdiplus::UnitPoint);
         Gdiplus::StringFormat format;
         format.SetAlignment(Gdiplus::StringAlignmentCenter);
         format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
@@ -857,7 +857,7 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
 
         if (!bLightTheme)
         {
-            Gdiplus::RectF textShadowRect(0.0f, textY + 1.5f, (float)width, textH);
+            Gdiplus::RectF textShadowRect(0.0f, textY + 2.0f, (float)width, textH);
             g.DrawString(m_statusText, -1, &font, textShadowRect, &format, &shadowBrush);
         }
 
