@@ -4,10 +4,12 @@
 #include <cmath>
 #include <mmsystem.h>
 #include <shlwapi.h>
+#include <dwmapi.h>
 
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "winmm.lib")
 #pragma comment(lib, "shlwapi.lib")
+#pragma comment(lib, "dwmapi.lib")
 
 extern HINSTANCE g_hInst;
 
@@ -339,16 +341,20 @@ void FaceOverlay::RunAnimation()
     if (bIsCredUI)
     {
         RECT rc = {0};
-        GetWindowRect(hwndSec, &rc);
+        if (FAILED(DwmGetWindowAttribute(hwndSec, DWMWA_EXTENDED_FRAME_BOUNDS, &rc, sizeof(rc))))
+        {
+            GetWindowRect(hwndSec, &rc);
+        }
         int dlgW = rc.right - rc.left;
         int dlgH = rc.bottom - rc.top;
 
-        // Position strictly over the 9-dot blue PIN logo and "Enter your PIN"
-        // spanning between dlgH * 0.35 and dlgH * 0.535, keeping header above and email/PIN box below
-        posX = rc.left + 25;
+        // Position flush across the entire visible width of the CredUI dialog
+        // to completely mask any native card borders or outlines while covering
+        // the 9-dot blue PIN logo and "Enter your PIN" cleanly without seams
+        posX = rc.left;
         posY = rc.top + (int)(dlgH * 0.35);
-        winW = dlgW - 50;
-        winH = (int)(dlgH * 0.185);
+        winW = dlgW;
+        winH = (int)(dlgH * 0.19);
         LogOverlay(L"CredUI dialog scenario: attached replacement overlay (%d,%d %dx%d)", posX, posY, winW, winH);
     }
     else
@@ -495,14 +501,19 @@ void FaceOverlay::RunAnimation()
             }
 
             RECT rcSec = {0};
-            if (GetWindowRect(hwndSec, &rcSec))
+            bool bGotRect = SUCCEEDED(DwmGetWindowAttribute(hwndSec, DWMWA_EXTENDED_FRAME_BOUNDS, &rcSec, sizeof(rcSec)));
+            if (!bGotRect)
+            {
+                bGotRect = (GetWindowRect(hwndSec, &rcSec) != FALSE);
+            }
+            if (bGotRect)
             {
                 int dlgW = rcSec.right - rcSec.left;
                 int dlgH = rcSec.bottom - rcSec.top;
-                int targetX = rcSec.left + 25;
+                int targetX = rcSec.left;
                 int targetY = rcSec.top + (int)(dlgH * 0.35);
-                int targetW = dlgW - 50;
-                int targetH = (int)(dlgH * 0.185);
+                int targetW = dlgW;
+                int targetH = (int)(dlgH * 0.19);
 
                 if (targetX != posX || targetY != posY || targetW != winW || targetH != winH)
                 {
