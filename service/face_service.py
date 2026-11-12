@@ -91,11 +91,13 @@ class FaceDaemon:
 
                 # Detect transition into locked state (Winlogon desktop)
                 if cur_desktop == "Winlogon" and last_desktop != "Winlogon":
-                    log_service("Workstation locked / Winlogon desktop detected. Triggering instant lock curtain wake pulse...")
+                    log_service("Workstation locked / Winlogon desktop detected. Lifting lock screen curtain cleanly with VK_UP...")
                     time.sleep(0.15)
-                    user32.keybd_event(0x20, 0, 0, 0)
+                    # Use VK_UP (0x26) with KEYEVENTF_EXTENDEDKEY (1) instead of VK_SPACE
+                    # to lift the lock screen curtain cleanly without inserting a space/dot into the PIN box!
+                    user32.keybd_event(0x26, 0x48, 1, 0)
                     time.sleep(0.02)
-                    user32.keybd_event(0x20, 0, 2, 0)
+                    user32.keybd_event(0x26, 0x48, 1 | 2, 0)
 
                 last_desktop = cur_desktop
             except Exception:

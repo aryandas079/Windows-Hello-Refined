@@ -781,32 +781,18 @@ static DWORD WINAPI PinSimulationThread(LPVOID lpParam)
     }
     else
     {
-        // Clear any bullet that LogonUI may have left in the selected PIN
-        // field before waking the curtain. This prevents a transient first
-        // bullet from appearing before the animated PIN sequence.
-        LogMsg(L"PinSimulationThread: pre-clearing lock-screen PIN field...");
-        for (int i = 0; i < 10; i++)
+        // Lock screen scenario: the lock screen curtain is lifted cleanly by the service with VK_UP,
+        // so NO space or dot was typed into the PIN box. The field is clean and focused.
+        // We avoid sending VK_UP here, because that would move focus away from the PIN box.
+        LogMsg(L"PinSimulationThread: preparing clean lock-screen PIN field...");
+        for (int i = 0; i < 4; i++)
         {
             FastSendKey(VK_BACK);
         }
-
-        // Lock screen scenario: lift the lock screen curtain smoothly with VK_UP
-        LogMsg(L"PinSimulationThread: lifting lock curtain with VK_UP...");
-        keybd_event(VK_UP, 0x48, 0, 0);
-        Sleep(15);
-        keybd_event(VK_UP, 0x48, KEYEVENTF_KEYUP, 0);
-        Sleep(380);
+        Sleep(40);
     }
 
-    // Step 2: Always start from an empty secure field.
-    LogMsg(L"PinSimulationThread: clearing input box...");
-    for (int i = 0; i < 15; i++)
-    {
-        FastSendKey(VK_BACK);
-    }
-    Sleep(80);
-
-    // Step 3: Type the complete PIN once with a short, consistent cadence.
+    // Step 2: Type the complete PIN once with a short, consistent cadence.
     LogMsg(L"PinSimulationThread: typing %d characters smoothly...", (int)wcslen(params->pin));
     for (size_t i = 0; i < wcslen(params->pin); i++)
     {
