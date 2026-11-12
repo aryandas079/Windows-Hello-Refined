@@ -35,6 +35,7 @@ set "PYTHON=%PROJ_DIR%\.venv\Scripts\python.exe"
 set "PYTHONW=%PROJ_DIR%\.venv\Scripts\pythonw.exe"
 set "SERVICE_PY=%PROJ_DIR%\service\face_service.py"
 set "PRESENCE_PY=%PROJ_DIR%\service\presence_service.py"
+set "PRESENCE_CONFIG_PY=%PROJ_DIR%\service\presence_config.py"
 set "DLL=%PROJ_DIR%\credential_provider\FaceCredentialProvider.dll"
 set "GUID={C85B5F30-5B1D-4A4A-8A87-3E3F45E412A8}"
 
@@ -104,6 +105,15 @@ if !errorLevel! equ 1 (
     echo       Keeping default Windows lock-screen suggestions.
     echo.
 )
+
+echo [*] Configure auto-lock when you are not detected...
+"%PYTHON%" "%PRESENCE_CONFIG_PY%" --interactive
+if !errorLevel! neq 0 (
+    echo [ERROR] Could not save the auto-lock timeout.
+    pause
+    exit /b 1
+)
+echo.
 
 :: ---------------------------------------------------------------------
 :: Step 3/5: Register Native Credential Provider DLL

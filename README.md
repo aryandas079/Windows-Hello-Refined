@@ -28,7 +28,7 @@ The project combines low-level Windows operating system internals with modern de
 | **Lock Screen Integration** | **C++17**, **Windows Credential Provider SDK** (`ICredentialProviderCredential3`) | Native 64-bit DLL loaded directly by `LogonUI.exe` on the secure `Winlogon` desktop. |
 | **Visual Animation and HUD** | **Win32 Layered Windows**, **GDI+**, `BITMAPV5HEADER` | Transparent overlay rendered with per-pixel alpha compositing, featuring gazing eye tracking, 900-degree spin, wink, and drop shadows. |
 | **Biometric and Credential Vault**| **Windows DPAPI** (`CryptProtectData` / `CryptUnprotectData`) | Hardware-backed cryptographic protection tied directly to the current user's Windows security descriptor. |
-| **Inter-Process Communication** | **Win32 Named Pipes** (`\\.\pipe\WindowsHelloRefinedPipe`) | Secure, high-throughput IPC between the lock screen credential provider and the pre-warmed background vision daemon. |
+| **Inter-Process Communication** | **Win32 Named Pipes** (`\\.\pipe\WindowsHelloRefinedPipe`) | Secure, high-throughput IPC between the lock screen credential provider and the background vision daemon. |
 | **Automated Unlock Engine** | **Win32 `SendInput`** (`KEYEVENTF_UNICODE`) | Types the DPAPI-secured Windows Hello PIN directly into the active logon desktop for instant TPM-verified unlock on Windows 11. |
 | **Tooling and Compilers** | **MSVC x64** (`cl.exe`, `link.exe`), **Python 3.10+ Virtual Environment** | Visual Studio 2022/2026 C++ toolchain and Windows SDK (`user32`, `gdiplus`, `credui`, `secur32`, `wtsapi32`). |
 
@@ -43,11 +43,11 @@ The project combines low-level Windows operating system internals with modern de
 - **Instant Unlock (~1.1s)**: Fast multi-stage verification pipeline with zero cold-start camera delay.
 - **Windows 11 Passwordless Compliant**: Supports Microsoft Accounts (`DevicePasswordLessBuildVersion = 2`) via hardware-backed PIN simulation.
 - **Hidden from Sign-in Tiles**: Operates as an ambient background overlay without creating clutter or duplicate tiles under Sign-in options.
-- **Anti-Spoofing and Liveness Verification**: Rejects smartphones, photo prints, and static images.
-- **Hardware-Friendly**: Camera hardware is released immediately upon verification (webcam LED turns off instantly).
+- **Liveness Diagnostics**: Includes texture, color, landmark, and depth checks for diagnostics and future policy controls.
+- **Hardware-Friendly**: Presence monitoring samples every 5 seconds and releases the camera between samples so the webcam LED turns off.
 - **Auto-Starts on Boot and Restart**: Automatically active when turning on your PC from shutdown or after rebooting.
 - **Lock Screen De-Cluttering**: Option during setup to disable Windows Spotlight news, fun facts, tips, and widgets.
-- **Walk-Away Auto-Lock**: While Windows is unlocked, the daemon samples the camera periodically and locks the workstation after 30 seconds without a detected face.
+- **Walk-Away Auto-Lock**: While Windows is unlocked, the daemon samples the camera every 5 seconds and locks the workstation after the configured absence timeout.
 
 ---
 
@@ -140,10 +140,9 @@ flowchart TD
     B -->|Sends VERIFY over Named Pipe| D["service/face_service.py"]
     D -->|Opens Camera| E["Webcam Hardware (Index 0)"]
     E -->|Captured Frame| F["FaceEngine (YuNet + SFace)"]
-    F -->|Liveness Check| G{"Human Verified?"}
+    F -->|Face Match| G{"Match >= 0.42?"}
     G -- No --> H["Screen stays on Clock & Wallpaper"]
-    G -- Yes --> I{"Biometric Match >= 0.42?"}
-    I -- Yes --> J["Decrypt PIN via Windows DPAPI"]
+    G -- Yes --> J["Decrypt PIN via Windows DPAPI"]
     J -->|Return verified + PIN| B
     B -->|Plays Spin & Wink Animation| C
     B -->|SimulatePinInput via SendInput| K["Slide up curtain & Enter PIN"]
@@ -153,7 +152,7 @@ flowchart TD
 
 1. **Zero Cloud Dependencies**: 100% of detection, alignment, feature extraction, and matching runs entirely offline on your local machine.
 2. **DPAPI Hardware Binding**: Profiles and PINs are encrypted using Windows Data Protection API (`win32crypt.CryptProtectData`). Only your logged-in Windows security principal can decrypt them.
-3. **Hardware Privacy Indicator**: The camera is opened strictly for 1-2 seconds during verification and released immediately (`cv2.VideoCapture.release()`), ensuring the physical camera LED remains off while your PC is in use.
+3. **Hardware Privacy Indicator**: During presence monitoring, the camera is opened for each 5-second sample and released immediately (`cv2.VideoCapture.release()`), so the physical camera LED is off between checks. Lock-screen verification opens it only while verification is active.
 
 ---
 
@@ -180,7 +179,7 @@ Windows Hello Refined/
 │   ├── face_detection_yunet_2023mar.onnx
 │   └── face_recognition_sface_2021dec.onnx
 ├── service/                 # Background system services
-│   ├── face_service.py      # Named pipe IPC daemon and 30-second presence auto-lock
+│   ├── face_service.py      # Named pipe IPC daemon and configurable presence auto-lock
 │   └── session_guard.py     # Walk-away auto-lock presence monitor
 ├── clean_lockscreen.py      # Lock screen de-clutter utility (removes trivia/widgets)
 ├── install.bat              # Single All-in-One installer (Setup + PIN + Clean + Register + Auto-Start)

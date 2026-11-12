@@ -1,6 +1,7 @@
 import sys
 import os
 import subprocess
+from service.presence_config import label, prompt_timeout, save_timeout
 
 def show_banner():
     print("=" * 68)
@@ -27,9 +28,10 @@ def main():
     print("  9. Run All-in-One Uninstaller (uninstall.bat)")
     print(" 10. Clean Lock Screen (Remove News, Fun Facts, Tips & Widgets)")
     print(" 11. Preview Transparent Windows Hello HTML/SVG Animation")
+    print(" 12. Set Face-Absence Auto-Lock Timeout")
     print("  0. Exit")
 
-    choice = input("\nSelect an option [0-11]: ").strip()
+    choice = input("\nSelect an option [0-12]: ").strip()
 
     if choice == "1":
         subprocess.run([python_exe, "setup_face.py"])
@@ -62,6 +64,10 @@ def main():
         subprocess.run([python_exe, "clean_lockscreen.py"])
     elif choice == "11":
         subprocess.run([python_exe, "ui/show_hello.py"])
+    elif choice == "12":
+        selected = prompt_timeout()
+        save_timeout(selected)
+        print(f"Auto-lock timeout saved: {label(selected)}")
     elif choice == "0":
         print("Exiting.")
     else:

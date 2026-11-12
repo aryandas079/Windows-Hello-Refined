@@ -14,10 +14,9 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
 from engine.face_engine import FaceEngine
+from service.presence_config import CHECK_INTERVAL, label, load_timeout, max_missed_checks
 
 LOG_FILE = r"C:\Users\Public\WindowsHelloRefined.log"
-CHECK_INTERVAL = 3.0
-MAX_MISSED_CHECKS = 10
 MUTEX_NAME = "Global\\WindowsHelloRefinedPresence"
 
 
@@ -79,35 +78,42 @@ def run():
     engine = FaceEngine()
     missed = 0
     next_check = time.monotonic()
-    log_service("Standalone presence watcher active: every 3s, lock after 10 misses.")
+    camera = None
+    log_service("Standalone presence watcher active: camera pulses every 5s.")
 
     try:
         while True:
+            timeout = load_timeout()
+            max_missed = max_missed_checks(timeout)
             next_check += CHECK_INTERVAL
             delay = next_check - time.monotonic()
             if delay > 0:
                 time.sleep(delay)
 
             try:
+                if timeout is None:
+                    missed = 0
+                    continue
                 if is_locked():
                     missed = 0
                     continue
 
-                camera = open_camera(0)
+                if camera is None or not camera.isOpened():
+                    camera = open_camera(0)
                 if camera is None:
                     log_service("Camera unavailable; sample ignored.")
                     continue
 
-                try:
-                    ok, frame = camera.read()
-                finally:
-                    camera.release()
-
+                ok, frame = camera.read()
                 if not ok:
                     log_service("Camera read failed; sample ignored.")
+                    camera.release()
+                    camera = None
                     continue
 
                 face, _ = engine.detect_face(frame)
+                camera.release()
+                camera = None
                 if face is not None:
                     if missed:
                         log_service("Face detected; resetting missed count.")
@@ -115,9 +121,9 @@ def run():
                     continue
 
                 missed += 1
-                log_service(f"No face detected; missed check {missed}/{MAX_MISSED_CHECKS}.")
-                if missed >= MAX_MISSED_CHECKS:
-                    log_service("10 missed checks in 30s; locking workstation.")
+                log_service(f"No face detected; missed check {missed}/{max_missed}.")
+                if missed >= max_missed:
+                    log_service(f"No face detected for {label(timeout)}; locking workstation.")
                     ctypes.windll.user32.LockWorkStation()
                     missed = 0
                     time.sleep(5.0)
@@ -125,6 +131,8 @@ def run():
                 missed = 0
                 log_service(f"Presence sample skipped: {exc}")
     finally:
+        if camera is not None:
+            camera.release()
         ctypes.windll.kernel32.CloseHandle(mutex)
 
 

@@ -11,17 +11,18 @@ if BASE_DIR not in sys.path:
 
 from engine.face_engine import FaceEngine
 from engine.storage import load_profile
+from service.presence_config import CHECK_INTERVAL, label, load_timeout, max_missed_checks
 
 class SessionGuard:
-    def __init__(self, away_timeout=30, check_interval=3, camera_index=0):
+    def __init__(self, away_timeout=None, check_interval=CHECK_INTERVAL, camera_index=0):
         """
         Walk-Away Auto-Lock:
         Monitors presence. If user steps away for > away_timeout seconds,
         it automatically locks Windows (Win + L).
         """
-        self.away_timeout = away_timeout
+        self.away_timeout = load_timeout() if away_timeout is None else away_timeout
         self.check_interval = check_interval
-        self.max_missed_checks = max(1, int(round(away_timeout / check_interval)))
+        self.max_missed_checks = max_missed_checks(self.away_timeout)
         self.camera_index = camera_index
         self.engine = FaceEngine()
         self.missed_checks = 0
@@ -34,8 +35,11 @@ class SessionGuard:
     def start(self):
         print("=" * 60)
         print("   WINDOWS HELLO REFINED - PRESENCE & WALK-AWAY LOCK")
-        print(f"   Auto-lock after {self.away_timeout}s of absence.")
+        print(f"   Auto-lock after {label(self.away_timeout)} of absence.")
         print("=" * 60)
+        if self.away_timeout is None:
+            print("   Auto-lock is disabled.")
+            return
 
         cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
         if not cap.isOpened():
@@ -88,5 +92,5 @@ if __name__ == "__main__":
     print("          GitHub:   https://github.com/aryandas079 (@aryandas079)")
     print("          LinkedIn: https://linkedin.com/in/iam-aryandas (@iam-aryandas)")
     print("=" * 68)
-    guard = SessionGuard(away_timeout=30, check_interval=3)
+    guard = SessionGuard()
     guard.start()

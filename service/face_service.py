@@ -25,6 +25,7 @@ if BASE_DIR not in sys.path:
 
 from engine.face_engine import FaceEngine
 from engine.storage import load_profile, load_credentials
+from service.presence_config import CHECK_INTERVAL, label, load_timeout, max_missed_checks
 
 PIPE_NAME = r"\\.\pipe\WindowsHelloRefinedPipe"
 LOG_FILE = r"C:\Users\Public\WindowsHelloRefined.log"
@@ -54,9 +55,10 @@ class FaceDaemon:
     def __init__(self, camera_index=0):
         self.camera_index = camera_index
         self.camera_lock = threading.Lock()
-        self.presence_interval = 3.0
+        self.presence_interval = CHECK_INTERVAL
         self.presence_missed_checks = 0
-        self.presence_max_missed_checks = 10
+        self.presence_timeout = load_timeout()
+        self.presence_max_missed_checks = max_missed_checks(self.presence_timeout)
         log_service("Initializing FaceDaemon engine...")
         self.engine = FaceEngine()
         self.profile = load_profile()
@@ -68,8 +70,7 @@ class FaceDaemon:
 
         # Start background Lock & Wake monitor
         threading.Thread(target=self._run_wake_monitor, daemon=True).start()
-        # Sample presence periodically while Windows is unlocked. The camera
-        # is opened only for each short sample and released immediately.
+        # Sample presence periodically while Windows is unlocked.
         threading.Thread(target=self._run_presence_monitor, daemon=True).start()
 
     def _run_wake_monitor(self):
@@ -127,23 +128,27 @@ class FaceDaemon:
             user32.CloseDesktop(h_desk)
 
     def _run_presence_monitor(self):
-        """Lock after 10 consecutive 3-second absence checks while unlocked."""
+        """Lock after the configured face-absence timeout."""
         log_service(
-            "Presence monitor active: checking every %.1fs; auto-lock after %d missed checks (%ds)."
+            "Presence monitor active: every %.1fs; auto-lock after %s."
             % (
                 self.presence_interval,
-                self.presence_max_missed_checks,
-                int(self.presence_interval * self.presence_max_missed_checks),
+                label(self.presence_timeout),
             )
         )
 
         next_check = time.monotonic()
         while True:
+            self.presence_timeout = load_timeout()
+            self.presence_max_missed_checks = max_missed_checks(self.presence_timeout)
             next_check += self.presence_interval
             delay = next_check - time.monotonic()
             if delay > 0:
                 time.sleep(delay)
             try:
+                if self.presence_timeout is None:
+                    self.presence_missed_checks = 0
+                    continue
                 if self._is_locked():
                     self.presence_missed_checks = 0
                     continue
@@ -202,6 +207,8 @@ class FaceDaemon:
             if not self.camera.isOpened():
                 self.camera = cv2.VideoCapture(self.camera_index, cv2.CAP_MSMF)
             if self.camera.isOpened():
+                self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+                self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
                 self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         return self.camera.isOpened() if self.camera else False
 
@@ -237,55 +244,45 @@ class FaceDaemon:
                     log_service("ERROR: Could not access camera.")
                     return {"status": "error", "message": "Could not access camera"}
 
-                start_time = time.time()
+                start_time = time.perf_counter()
                 frames_tested = 0
-                consecutive_verified = 0
                 self.engine.reset_blink_history()
 
-                while time.time() - start_time < timeout_sec:
+                while time.perf_counter() - start_time < timeout_sec:
                     ret, frame = self.camera.read()
                     if not ret:
-                        time.sleep(0.01)
                         continue
 
                     frames_tested += 1
 
-                    # Adaptive low-light preprocessing (gamma boost + CLAHE)
-                    enhanced = self.engine.preprocess_lighting(frame)
                     face, status = self.engine.detect_face(frame)
 
                     if face is not None:
-                        is_live, lscore, live_msg = self.engine.check_liveness(frame, face, enhanced=enhanced)
-                        feature = self.engine.extract_features(enhanced, face)
+                        feature = self.engine.extract_features(frame, face)
                         is_match, similarity = self.engine.match_face(feature, enrolled)
-
-                        log_service(f"Frame {frames_tested}: live={is_live} ({live_msg}, score={lscore:.2f}), match={is_match} (sim={similarity:.3f}, cons={consecutive_verified})")
-
-                        # Verified genuine match: requires both biometric match AND anti-spoof liveness
-                        # across at least 2 consecutive frames to eliminate single-frame glitch bypass!
-                        if is_match and is_live:
-                            consecutive_verified += 1
-                            if consecutive_verified >= 2:
-                                log_service(f"Match verified across {consecutive_verified} consecutive frames! User: {username}, Similarity: {similarity:.2f}, Liveness: {lscore:.2f}")
-                                creds = load_credentials()
-                                resp = {
-                                    "status": "verified",
-                                    "username": username,
-                                    "confidence": round(similarity * 100, 1),
-                                    "message": f"Welcome back, {username}!"
-                                }
-                                if creds:
-                                    if creds.get("pin"):
-                                        resp["pin"] = creds["pin"]
-                                    if creds.get("password"):
-                                        resp["password"] = creds["password"]
-                                    if creds.get("domain"):
-                                        resp["domain"] = creds["domain"]
-                                return resp
-                        else:
-                            consecutive_verified = 0
-
-                    time.sleep(0.005)
+                        log_service(
+                            f"Frame {frames_tested}: match={is_match} "
+                            f"(sim={similarity:.3f})"
+                        )
+                        if is_match:
+                            log_service(
+                                f"Face match verified immediately for user: {username}"
+                            )
+                            creds = load_credentials()
+                            resp = {
+                                "status": "verified",
+                                "username": username,
+                                "confidence": round(similarity * 100, 1),
+                                "message": f"Welcome back, {username}!",
+                            }
+                            if creds:
+                                if creds.get("pin"):
+                                    resp["pin"] = creds["pin"]
+                                if creds.get("password"):
+                                    resp["password"] = creds["password"]
+                                if creds.get("domain"):
+                                    resp["domain"] = creds["domain"]
+                            return resp
 
                 log_service(f"Face verification timed out after {frames_tested} frames ({timeout_sec:.1f}s).")
                 return {"status": "failed", "message": "Face verification timed out"}
