@@ -47,6 +47,7 @@ The project combines low-level Windows operating system internals with modern de
 - **Hardware-Friendly**: Camera hardware is released immediately upon verification (webcam LED turns off instantly).
 - **Auto-Starts on Boot and Restart**: Automatically active when turning on your PC from shutdown or after rebooting.
 - **Lock Screen De-Cluttering**: Option during setup to disable Windows Spotlight news, fun facts, tips, and widgets.
+- **Walk-Away Auto-Lock**: While Windows is unlocked, the daemon samples the camera periodically and locks the workstation after 30 seconds without a detected face.
 
 ---
 
@@ -179,7 +180,7 @@ Windows Hello Refined/
 │   ├── face_detection_yunet_2023mar.onnx
 │   └── face_recognition_sface_2021dec.onnx
 ├── service/                 # Background system services
-│   ├── face_service.py      # Named pipe IPC biometric daemon
+│   ├── face_service.py      # Named pipe IPC daemon and 30-second presence auto-lock
 │   └── session_guard.py     # Walk-away auto-lock presence monitor
 ├── clean_lockscreen.py      # Lock screen de-clutter utility (removes trivia/widgets)
 ├── install.bat              # Single All-in-One installer (Setup + PIN + Clean + Register + Auto-Start)

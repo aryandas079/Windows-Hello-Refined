@@ -38,6 +38,7 @@ set "GUID={C85B5F30-5B1D-4A4A-8A87-3E3F45E412A8}"
 :: ---------------------------------------------------------------------
 echo [*] [1/4] Stopping background face service...
 taskkill /F /IM pythonw.exe >nul 2>&1
+schtasks /delete /tn "WindowsHelloRefinedPresence" /f >nul 2>&1
 echo       Background service stopped.
 echo.
 

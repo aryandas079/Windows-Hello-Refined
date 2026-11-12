@@ -13,7 +13,7 @@ from engine.face_engine import FaceEngine
 from engine.storage import load_profile
 
 class SessionGuard:
-    def __init__(self, away_timeout=25, check_interval=3, camera_index=0):
+    def __init__(self, away_timeout=30, check_interval=3, camera_index=0):
         """
         Walk-Away Auto-Lock:
         Monitors presence. If user steps away for > away_timeout seconds,
@@ -21,9 +21,10 @@ class SessionGuard:
         """
         self.away_timeout = away_timeout
         self.check_interval = check_interval
+        self.max_missed_checks = max(1, int(round(away_timeout / check_interval)))
         self.camera_index = camera_index
         self.engine = FaceEngine()
-        self.last_seen_time = time.time()
+        self.missed_checks = 0
         self.is_running = True
 
     def lock_workstation(self):
@@ -46,8 +47,6 @@ class SessionGuard:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
-        self.last_seen_time = time.time()
-
         try:
             while self.is_running:
                 ret, frame = cap.read()
@@ -56,18 +55,22 @@ class SessionGuard:
                     continue
 
                 face, _ = self.engine.detect_face(frame)
-                now = time.time()
-
                 if face is not None:
                     # User is present
-                    self.last_seen_time = now
-                    print(f"[*] User present. Resetting away timer. [{time.strftime('%H:%M:%S')}]", end="\r")
+                    if self.missed_checks:
+                        print("[*] User detected. Resetting missed-check count.       ", end="\r")
+                    self.missed_checks = 0
                 else:
-                    away_sec = int(now - self.last_seen_time)
-                    print(f"[?] User away: {away_sec}/{self.away_timeout}s...            ", end="\r")
-                    if away_sec >= self.away_timeout:
+                    self.missed_checks += 1
+                    elapsed = self.missed_checks * self.check_interval
+                    print(
+                        f"[?] User away: {self.missed_checks}/{self.max_missed_checks} checks "
+                        f"({elapsed}/{self.away_timeout}s)...            ",
+                        end="\r",
+                    )
+                    if self.missed_checks >= self.max_missed_checks:
                         self.lock_workstation()
-                        self.last_seen_time = time.time()  # Reset after locking
+                        self.missed_checks = 0
                         # Pause checking while workstation is locked
                         time.sleep(5)
 
@@ -85,5 +88,5 @@ if __name__ == "__main__":
     print("          GitHub:   https://github.com/aryandas079 (@aryandas079)")
     print("          LinkedIn: https://linkedin.com/in/iam-aryandas (@iam-aryandas)")
     print("=" * 68)
-    guard = SessionGuard(away_timeout=25, check_interval=2)
+    guard = SessionGuard(away_timeout=30, check_interval=3)
     guard.start()

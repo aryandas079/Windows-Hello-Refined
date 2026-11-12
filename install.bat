@@ -34,6 +34,7 @@ if "%PROJ_DIR:~-1%"=="\" set "PROJ_DIR=%PROJ_DIR:~0,-1%"
 set "PYTHON=%PROJ_DIR%\.venv\Scripts\python.exe"
 set "PYTHONW=%PROJ_DIR%\.venv\Scripts\pythonw.exe"
 set "SERVICE_PY=%PROJ_DIR%\service\face_service.py"
+set "PRESENCE_PY=%PROJ_DIR%\service\presence_service.py"
 set "DLL=%PROJ_DIR%\credential_provider\FaceCredentialProvider.dll"
 set "GUID={C85B5F30-5B1D-4A4A-8A87-3E3F45E412A8}"
 
@@ -142,6 +143,8 @@ taskkill /F /IM pythonw.exe >nul 2>&1
 
 :: Register Windows Scheduled Task to run at system boot
 schtasks /create /tn "WindowsHelloRefinedDaemon" /tr "\"%PYTHONW%\" \"%SERVICE_PY%\"" /sc onstart /ru "SYSTEM" /rl highest /f >nul 2>&1
+:: The presence watcher needs the interactive user's camera session, not SYSTEM.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$action=New-ScheduledTaskAction -Execute '%PYTHONW%' -Argument '\"%PRESENCE_PY%\"'; $trigger=New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME; $principal=New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType InteractiveToken -RunLevel Highest; Register-ScheduledTask -TaskName 'WindowsHelloRefinedPresence' -Action $action -Trigger $trigger -Principal $principal -Force" >nul 2>&1
 
 :: Register HKCU Run key for user logon redundancy
 reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "WindowsHelloRefinedService" /t REG_SZ /d "\"%PYTHONW%\" \"%SERVICE_PY%\"" /f >nul
@@ -153,6 +156,7 @@ echo.
 :: ---------------------------------------------------------------------
 echo [*] [5/5] Starting face service daemon in background...
 start "" "%PYTHONW%" "%SERVICE_PY%"
+start "" "%PYTHONW%" "%PRESENCE_PY%"
 echo       Background service is now active and listening.
 echo.
 

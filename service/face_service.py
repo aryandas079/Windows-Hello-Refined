@@ -54,6 +54,9 @@ class FaceDaemon:
     def __init__(self, camera_index=0):
         self.camera_index = camera_index
         self.camera_lock = threading.Lock()
+        self.presence_interval = 3.0
+        self.presence_missed_checks = 0
+        self.presence_max_missed_checks = 10
         log_service("Initializing FaceDaemon engine...")
         self.engine = FaceEngine()
         self.profile = load_profile()
@@ -65,6 +68,9 @@ class FaceDaemon:
 
         # Start background Lock & Wake monitor
         threading.Thread(target=self._run_wake_monitor, daemon=True).start()
+        # Sample presence periodically while Windows is unlocked. The camera
+        # is opened only for each short sample and released immediately.
+        threading.Thread(target=self._run_presence_monitor, daemon=True).start()
 
     def _run_wake_monitor(self):
         """
@@ -102,6 +108,92 @@ class FaceDaemon:
                 last_desktop = cur_desktop
             except Exception:
                 time.sleep(1.0)
+
+    def _is_locked(self):
+        """Return True when the active input desktop is the secure Winlogon desktop."""
+        user32 = ctypes.windll.user32
+        h_desk = user32.OpenInputDesktop(0, False, 0x0001)
+        if not h_desk:
+            return False
+
+        try:
+            buf = ctypes.create_unicode_buffer(64)
+            needed = ctypes.c_ulong()
+            ok = user32.GetUserObjectInformationW(
+                h_desk, 2, buf, ctypes.sizeof(buf), ctypes.byref(needed)
+            )
+            return bool(ok and buf.value.lower() == "winlogon")
+        finally:
+            user32.CloseDesktop(h_desk)
+
+    def _run_presence_monitor(self):
+        """Lock after 10 consecutive 3-second absence checks while unlocked."""
+        log_service(
+            "Presence monitor active: checking every %.1fs; auto-lock after %d missed checks (%ds)."
+            % (
+                self.presence_interval,
+                self.presence_max_missed_checks,
+                int(self.presence_interval * self.presence_max_missed_checks),
+            )
+        )
+
+        next_check = time.monotonic()
+        while True:
+            next_check += self.presence_interval
+            delay = next_check - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)
+            try:
+                if self._is_locked():
+                    self.presence_missed_checks = 0
+                    continue
+
+                # Do not compete with an active lock-screen verification.
+                if not self.camera_lock.acquire(False):
+                    continue
+
+                present = False
+                sample_ok = False
+                try:
+                    if self.ensure_camera():
+                        ret, frame = self.camera.read()
+                        if ret:
+                            sample_ok = True
+                            face, _ = self.engine.detect_face(frame)
+                            present = face is not None
+                finally:
+                    self.release_camera()
+                    self.camera_lock.release()
+
+                if not sample_ok:
+                    continue
+
+                if present:
+                    if self.presence_missed_checks:
+                        log_service("Presence detected again; resetting missed-check count.")
+                    self.presence_missed_checks = 0
+                    continue
+
+                self.presence_missed_checks += 1
+                log_service(
+                    "No face detected; missed presence check %d/%d."
+                    % (self.presence_missed_checks, self.presence_max_missed_checks)
+                )
+                if self.presence_missed_checks >= self.presence_max_missed_checks:
+                    log_service(
+                        "No face detected for %d checks (%ds); locking workstation."
+                        % (
+                            self.presence_max_missed_checks,
+                            int(self.presence_interval * self.presence_max_missed_checks),
+                        )
+                    )
+                    ctypes.windll.user32.LockWorkStation()
+                    self.presence_missed_checks = 0
+                    time.sleep(5.0)
+            except Exception as exc:
+                # A camera or desktop-transition failure must not be treated
+                # as proof that the user is absent.
+                log_service("Presence monitor sample skipped: %s" % exc)
 
     def ensure_camera(self):
         """Open the camera ONLY when needed."""
@@ -246,7 +338,7 @@ class FaceDaemon:
 
     def run_server(self):
         log_service(f"Windows Hello Refined Service active on {PIPE_NAME}")
-        log_service("Camera is IDLE (LED is OFF). Waiting for lock-screen requests...")
+        log_service("Camera is IDLE (LED is OFF). Waiting for lock-screen requests and presence samples...")
 
         sa = get_pipe_security_attributes()
 
