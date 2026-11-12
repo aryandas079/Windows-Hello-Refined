@@ -635,6 +635,59 @@ static void FastSendChar(WCHAR ch)
     }
 }
 
+static void ClearPinField()
+{
+    BYTE controlScan = (BYTE)MapVirtualKeyW(VK_CONTROL, MAPVK_VK_TO_VSC);
+    keybd_event(VK_CONTROL, controlScan, 0, 0);
+    FastSendKey('A');
+    keybd_event(VK_CONTROL, controlScan, KEYEVENTF_KEYUP, 0);
+    FastSendKey(VK_BACK);
+
+    for (int i = 0; i < 10; i++)
+    {
+        FastSendKey(VK_BACK);
+    }
+}
+
+static bool SendPinAtomically(LPCWSTR pin)
+{
+    if (!pin) return false;
+
+    size_t length = wcslen(pin);
+    if (length == 0 || length > 120) return false;
+
+    INPUT inputs[243] = {};
+    UINT count = 0;
+    for (size_t i = 0; i < length; i++)
+    {
+        inputs[count].type = INPUT_KEYBOARD;
+        inputs[count].ki.wVk = 0;
+        inputs[count].ki.wScan = pin[i];
+        inputs[count].ki.dwFlags = KEYEVENTF_UNICODE;
+        count++;
+
+        inputs[count].type = INPUT_KEYBOARD;
+        inputs[count].ki.wVk = 0;
+        inputs[count].ki.wScan = pin[i];
+        inputs[count].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+        count++;
+    }
+
+    inputs[count].type = INPUT_KEYBOARD;
+    inputs[count].ki.wVk = VK_RETURN;
+    inputs[count].ki.wScan = (WORD)MapVirtualKeyW(VK_RETURN, MAPVK_VK_TO_VSC);
+    count++;
+
+    UINT sent = SendInput(count, inputs, sizeof(INPUT));
+    if (sent != count)
+    {
+        LogMsg(L"SendPinAtomically: only sent %u of %u input events (err=%lu)", sent, count, GetLastError());
+        return false;
+    }
+
+    return true;
+}
+
 static bool IsLockScreenDesktop()
 {
     HDESK hInput = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS);
@@ -655,7 +708,18 @@ static bool IsCredUIDialogOpen()
     HWND hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
     if (!hwndDlg) hwndDlg = FindWindowW(NULL, L"Windows Security");
     if (!hwndDlg) hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", NULL);
-    return (hwndDlg && IsWindowVisible(hwndDlg));
+    if (hwndDlg && IsWindowVisible(hwndDlg))
+    {
+        RECT rc = {0};
+        GetWindowRect(hwndDlg, &rc);
+        int w = rc.right - rc.left;
+        int h = rc.bottom - rc.top;
+        if (w < 1000 && h < 800 && w > 100 && h > 100)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 struct PinSimParams
@@ -701,7 +765,7 @@ static DWORD WINAPI PinSimulationThread(LPVOID lpParam)
         LogMsg(L"PinSimulationThread: waiting for complete Windows Hello celebration animation on CredUI dialog...");
         Sleep(1350);
 
-        // Ensure CredUI dialog window has focus and click directly into PIN box
+        // Ensure CredUI dialog window has focus
         HWND hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
         if (!hwndDlg) hwndDlg = FindWindowW(NULL, L"Windows Security");
         if (!hwndDlg) hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", NULL);
@@ -713,32 +777,19 @@ static DWORD WINAPI PinSimulationThread(LPVOID lpParam)
         }
 
         SetForegroundWindow(hwndDlg);
-        BringWindowToTop(hwndDlg);
-        SetActiveWindow(hwndDlg);
         Sleep(40);
-
-        RECT rcDlg;
-        if (GetWindowRect(hwndDlg, &rcDlg))
-        {
-            int dlgW = rcDlg.right - rcDlg.left;
-            int dlgH = rcDlg.bottom - rcDlg.top;
-            int pinX = rcDlg.left + dlgW / 2;
-            int pinY = rcDlg.top + (int)(dlgH * 0.70);
-
-            POINT oldCursor;
-            GetCursorPos(&oldCursor);
-            SetCursorPos(pinX, pinY);
-            Sleep(20);
-            mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
-            Sleep(15);
-            mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
-            Sleep(40);
-            SetCursorPos(oldCursor.x, oldCursor.y);
-            LogMsg(L"PinSimulationThread: focused CredUI PIN box via click at (%d,%d)", pinX, pinY);
-        }
     }
     else
     {
+        // Clear any bullet that LogonUI may have left in the selected PIN
+        // field before waking the curtain. This prevents a transient first
+        // bullet from appearing before the animated PIN sequence.
+        LogMsg(L"PinSimulationThread: pre-clearing lock-screen PIN field...");
+        for (int i = 0; i < 10; i++)
+        {
+            FastSendKey(VK_BACK);
+        }
+
         // Lock screen scenario: lift the lock screen curtain smoothly with VK_UP
         LogMsg(L"PinSimulationThread: lifting lock curtain with VK_UP...");
         keybd_event(VK_UP, 0x48, 0, 0);
@@ -747,26 +798,40 @@ static DWORD WINAPI PinSimulationThread(LPVOID lpParam)
         Sleep(380);
     }
 
-    // Step 2: Clear any accidental or previous input from the password/PIN box
+    // Step 2: Always start from an empty secure field.
     LogMsg(L"PinSimulationThread: clearing input box...");
-    for (int b = 0; b < 10; b++)
+    for (int i = 0; i < 15; i++)
     {
         FastSendKey(VK_BACK);
     }
-    Sleep(20);
+    Sleep(80);
 
-    // Step 3: Type each character in one continuous stroke
-    LogMsg(L"PinSimulationThread: typing %d characters in one continuous stroke...", (int)wcslen(params->pin));
+    // Step 3: Type the complete PIN once with a short, consistent cadence.
+    LogMsg(L"PinSimulationThread: typing %d characters smoothly...", (int)wcslen(params->pin));
     for (size_t i = 0; i < wcslen(params->pin); i++)
     {
-        FastSendChar(params->pin[i]);
-        Sleep(8);
+        WCHAR ch = params->pin[i];
+        if (ch >= L'0' && ch <= L'9')
+        {
+            WORD vk = (WORD)('0' + (ch - L'0'));
+            BYTE scan = (BYTE)MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
+            keybd_event((BYTE)vk, scan, 0, 0);
+            Sleep(15);
+            keybd_event((BYTE)vk, scan, KEYEVENTF_KEYUP, 0);
+            Sleep(15);
+        }
+        else
+        {
+            FastSendChar(ch);
+            Sleep(20);
+        }
     }
 
-    // Step 4: Submit password/PIN with Enter
-    Sleep(40);
-    LogMsg(L"PinSimulationThread: submitting with Enter...");
-    FastSendKey(VK_RETURN);
+    Sleep(70);
+    BYTE enterScan = (BYTE)MapVirtualKeyW(VK_RETURN, MAPVK_VK_TO_VSC);
+    keybd_event(VK_RETURN, enterScan, 0, 0);
+    Sleep(20);
+    keybd_event(VK_RETURN, enterScan, KEYEVENTF_KEYUP, 0);
     LogMsg(L"PinSimulationThread: credentials entered and submitted.");
 
     if (hInputDesk)
@@ -876,6 +941,7 @@ void FaceCredential::DoVerification()
 
     POINT lastCursor = {0, 0};
     GetCursorPos(&lastCursor);
+    bool credUiFieldCleared = false;
 
     const WCHAR* pipeName = L"\\\\.\\pipe\\WindowsHelloRefinedPipe";
 
@@ -888,6 +954,24 @@ void FaceCredential::DoVerification()
             // CredUI dialog closed
             Sleep(80);
             continue;
+        }
+
+        if (bIsCredUI && !credUiFieldCleared)
+        {
+            credUiFieldCleared = true;
+            HWND hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
+            if (!hwndDlg) hwndDlg = FindWindowW(NULL, L"Windows Security");
+            if (!hwndDlg) hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", NULL);
+            if (hwndDlg && IsWindowVisible(hwndDlg))
+            {
+                SetForegroundWindow(hwndDlg);
+                Sleep(20);
+                for (int i = 0; i < 15; i++)
+                {
+                    FastSendKey(VK_BACK);
+                }
+                LogMsg(L"DoVerification: cleared CredUI PIN field via Backspace before face verification.");
+            }
         }
 
         // Show scanning animation
@@ -988,10 +1072,10 @@ void FaceCredential::DoVerification()
                            (int)wcslen(secret), bIsCredUI);
                     SimulatePinInput(secret, bIsCredUI);
 
-                    // Post-verification guardian loop
-                    LogMsg(L"Starting post-verification guardian loop (bIsCredUI=%d)...", bIsCredUI);
+                    // Monitor the result without sending a second PIN sequence.
+                    LogMsg(L"Starting post-verification monitor (bIsCredUI=%d)...", bIsCredUI);
                     DWORD startTime = GetTickCount();
-                    DWORD lastAutoRetry = startTime;
+                    bool lockScreenRetrySent = false;
 
                     while (!m_bStopThread && (GetTickCount() - startTime < 8000))
                     {
@@ -1007,34 +1091,22 @@ void FaceCredential::DoVerification()
                         if (bIsCredUI && !IsCredUIDialogOpen())
                         {
                             LogMsg(L"Guardian: CredUI dialog closed. Authentication successful.");
+                            m_overlay.Hide(true);
                             break;
                         }
 
-                        bool userClicked = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-                        bool userKey = ((GetAsyncKeyState(VK_SPACE) & 0x8000) != 0) ||
-                                       ((GetAsyncKeyState(VK_RETURN) & 0x8000) != 0);
-
-                        DWORD now = GetTickCount();
-                        bool periodicRetry = !bIsCredUI && (now - lastAutoRetry > 1200);
-
-                        if (userClicked || userKey || periodicRetry)
+                        if (!bIsCredUI && !lockScreenRetrySent &&
+                            (GetTickCount() - startTime >= 1400) &&
+                            IsLockScreenDesktop())
                         {
-                            LogMsg(L"Guardian: Interaction detected (click=%d, key=%d, periodic=%d). Auto-filling...",
-                                   userClicked, userKey, periodicRetry);
-
-                            if (userClicked || userKey)
-                            {
-                                Sleep(180);
-                            }
-
-                            if (m_bStopThread) break;
-                            if (!bIsCredUI && !IsLockScreenDesktop()) break;
-                            if (bIsCredUI && !IsCredUIDialogOpen()) break;
-
-                            SimulatePinInput(secret, bIsCredUI);
-                            lastAutoRetry = GetTickCount();
-                            Sleep(400);
+                            // LogonUI can consume the first wake pulse while
+                            // transitioning to the PIN field. Retry once only
+                            // while the workstation is still locked.
+                            lockScreenRetrySent = true;
+                            LogMsg(L"Monitor: lock screen still active; retrying PIN fill once.");
+                            SimulatePinInput(secret, false);
                         }
+
                     }
                 }
                 break; // Verification complete and unlocked!

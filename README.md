@@ -71,13 +71,17 @@ The installer automatically guides you through the full onboarding:
 2. **Environment Setup**: Verifies Python 3.10+ and automatically sets up `.venv` with `requirements.txt`.
 3. **Face Biometric Enrollment**: Opens the camera HUD and captures 14 multi-angle samples (Look straight, Turn left, Turn right, Tilt/Smile).
 4. **Windows Hello PIN Setup**: Asks for your Windows Hello PIN once and encrypts it locally with Windows DPAPI.
-5. **Clean Lock Screen**: Asks if you want to remove Windows Spotlight fun facts, news, tips, and MSN widgets.
+5. **Clean Lock Screen**: Asks whether to remove Windows Spotlight fun facts, “Like what you see?”/“Not for me” prompts, news, tips, feeds, detailed status apps, and MSN widgets while keeping the wallpaper and clock.
 6. **Credential Provider Registration**: Registers `FaceCredentialProvider.dll` with Windows LogonUI (`regsvr32`).
 7. **Boot-Time Startup Service**: Registers a Windows Scheduled Task (`WindowsHelloRefinedDaemon`) to automatically run on computer startup, restart, and login.
 8. **Service Startup**: Launches the background daemon immediately so you are ready to use it without rebooting.
 
 ### 3. Test It
 Press <kbd>Win</kbd> + <kbd>L</kbd> to lock your screen. Look at your camera to verify and unlock!
+
+If you choose **Y** for lock-screen cleanup during installation, Windows keeps the wallpaper and clock,
+but removes promotional suggestions, Spotlight trivia, feeds, widgets, and detailed status content.
+The saved PIN remains available internally so face verification can unlock automatically.
 
 ---
 

@@ -134,8 +134,9 @@ def clean_lock_screen():
     set_reg_value(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP", "LockScreenWidgetsEnabled", 0)
     print("  [DONE] Enforce Machine Widgets Policies (Dsh & PersonalizationCSP)")
 
-    # 6. Ensure Windows Spotlight background rotation is permitted in ContentDeliveryManager
+    # 6. Keep wallpaper rotation available without restoring Spotlight overlays.
     set_reg_value(winreg.HKEY_CURRENT_USER, cdm_key, "RotatingLockScreenEnabled", 1)
+    set_reg_value(winreg.HKEY_CURRENT_USER, cdm_key, "RotatingLockScreenOverlayEnabled", 0)
     set_reg_value(winreg.HKEY_CURRENT_USER, cdm_key, "ContentDeliveryAllowed", 1)
 
     # 8. Clear cached Spotlight suggestions and trivia
@@ -179,6 +180,10 @@ def restore_lock_screen():
 
 def main():
     show_banner()
+    if len(sys.argv) > 1 and sys.argv[1].lower() in ("--clean", "/clean"):
+        clean_lock_screen()
+        return
+
     print("\nOptions:")
     print("  1. Remove all lock screen suggestions, news, fun facts, and widgets")
     print("  2. Restore default Windows lock screen suggestions")

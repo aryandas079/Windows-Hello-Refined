@@ -88,6 +88,23 @@ if %errorLevel% neq 0 (
 echo.
 
 :: ---------------------------------------------------------------------
+:: Optional lock-screen decluttering
+:: ---------------------------------------------------------------------
+choice /C YN /N /M "Remove lock-screen suggestions, widgets, and 'Like what you see?' overlays? [Y/N]: "
+if !errorLevel! equ 1 (
+    echo.
+    echo       Removing lock-screen suggestions and promotional overlays...
+    "%PYTHON%" "%PROJ_DIR%\clean_lockscreen.py" --clean
+    if !errorLevel! neq 0 (
+        echo [WARNING] Lock-screen cleanup did not complete successfully.
+    )
+    echo.
+) else (
+    echo       Keeping default Windows lock-screen suggestions.
+    echo.
+)
+
+:: ---------------------------------------------------------------------
 :: Step 3/5: Register Native Credential Provider DLL
 :: ---------------------------------------------------------------------
 echo [*] [3/5] Registering Credential Provider into Windows Logon...

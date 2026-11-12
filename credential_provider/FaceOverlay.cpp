@@ -209,17 +209,18 @@ void FaceOverlay::Hide(bool bForce)
     m_bRunning = FALSE;
     LeaveCriticalSection(&m_cs);
 
+    if (m_hwnd)
+    {
+        ShowWindow(m_hwnd, SW_HIDE);
+        DestroyWindow(m_hwnd);
+        m_hwnd = NULL;
+    }
+
     if (m_hThread)
     {
         WaitForSingleObject(m_hThread, 500);
         CloseHandle(m_hThread);
         m_hThread = NULL;
-    }
-
-    if (m_hwnd)
-    {
-        DestroyWindow(m_hwnd);
-        m_hwnd = NULL;
     }
 }
 
@@ -343,11 +344,11 @@ void FaceOverlay::RunAnimation()
         int dlgH = rc.bottom - rc.top;
 
         // Position strictly over the 9-dot blue PIN logo and "Enter your PIN"
-        // spanning full content width (dlgW - 40) from rc.left + 20 to completely cover tile borders and outlines
-        winW = dlgW - 40;
-        winH = (int)(dlgH * 0.23);
-        posX = rc.left + 20;
-        posY = rc.top + (int)(dlgH * 0.30);
+        // spanning between dlgH * 0.35 and dlgH * 0.535, keeping header above and email/PIN box below
+        posX = rc.left + 25;
+        posY = rc.top + (int)(dlgH * 0.35);
+        winW = dlgW - 50;
+        winH = (int)(dlgH * 0.185);
         LogOverlay(L"CredUI dialog scenario: attached replacement overlay (%d,%d %dx%d)", posX, posY, winW, winH);
     }
     else
@@ -461,7 +462,14 @@ void FaceOverlay::RunAnimation()
     PremultiplyAlpha(pBits, winW * winH);
     UpdateLayeredWindow(m_hwnd, hdcScreen, &ptDst, &sz, hdcMem, &ptSrc, 0, &blend, ULW_ALPHA);
 
-    SetWindowPos(m_hwnd, HWND_TOPMOST, posX, posY, winW, winH, SWP_SHOWWINDOW | SWP_NOACTIVATE);
+    if (bIsCredUI)
+    {
+        SetWindowPos(m_hwnd, NULL, posX, posY, winW, winH, SWP_SHOWWINDOW | SWP_NOACTIVATE | SWP_NOZORDER);
+    }
+    else
+    {
+        SetWindowPos(m_hwnd, HWND_TOPMOST, posX, posY, winW, winH, SWP_SHOWWINDOW | SWP_NOACTIVATE);
+    }
     ShowWindow(m_hwnd, SW_SHOWNOACTIVATE);
 
     while (m_bRunning)
@@ -475,26 +483,26 @@ void FaceOverlay::RunAnimation()
 
         if (bIsCredUI)
         {
-            // For CredUI dialog, ensure overlay follows dialog position if moved
-            HWND hwndSecLoop = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
-            if (!hwndSecLoop) hwndSecLoop = FindWindowW(NULL, L"Windows Security");
-            if (!hwndSecLoop) hwndSecLoop = FindWindowW(L"Credential Dialog Xaml Host", NULL);
-            if (!hwndSecLoop || !IsWindow(hwndSecLoop) || !IsWindowVisible(hwndSecLoop))
+            // For CredUI dialog, ensure overlay follows dialog position and exits IMMEDIATELY when dialog is hidden or closed
+            if (!hwndSec || !IsWindow(hwndSec) || !IsWindowVisible(hwndSec))
             {
                 LogOverlay(L"CredUI dialog closed or hidden. Exiting overlay immediately.");
+                ShowWindow(m_hwnd, SW_HIDE);
+                DestroyWindow(m_hwnd);
+                m_hwnd = NULL;
                 m_bRunning = FALSE;
                 break;
             }
 
             RECT rcSec = {0};
-            if (GetWindowRect(hwndSecLoop, &rcSec))
+            if (GetWindowRect(hwndSec, &rcSec))
             {
                 int dlgW = rcSec.right - rcSec.left;
                 int dlgH = rcSec.bottom - rcSec.top;
-                int targetX = rcSec.left + 20;
-                int targetY = rcSec.top + (int)(dlgH * 0.30);
-                int targetW = dlgW - 40;
-                int targetH = (int)(dlgH * 0.23);
+                int targetX = rcSec.left + 25;
+                int targetY = rcSec.top + (int)(dlgH * 0.35);
+                int targetW = dlgW - 50;
+                int targetH = (int)(dlgH * 0.185);
 
                 if (targetX != posX || targetY != posY || targetW != winW || targetH != winH)
                 {
@@ -649,7 +657,7 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
     bool bLightTheme = false;
 
     float cx = width / 2.0f;
-    float cy = bIsCredUI ? 48.0f : 34.0f;
+    float cy = bIsCredUI ? 38.0f : 34.0f;
 
     if (bIsCredUI)
     {
@@ -667,7 +675,8 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
             bLightTheme = true;
         }
 
-        // Completely mask the 3x3 blue dots PIN icon and "Enter your PIN"
+        // Fill the entire overlay rectangle with solid background to hide ONLY
+        // the 9-dot blue PIN logo and "Enter your PIN" text completely
         Gdiplus::SolidBrush bgBrush(bLightTheme ? Gdiplus::Color(255, 255, 255, 255) : Gdiplus::Color(255, 32, 32, 32));
         g.FillRectangle(&bgBrush, 0.0f, 0.0f, (float)width, (float)height);
     }
@@ -750,8 +759,8 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
             sf.SetAlignment(Gdiplus::StringAlignmentCenter);
             sf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
 
-            float textY = bIsCredUI ? 96.0f : 82.0f;
-            float textH = 34.0f;
+            float textY = bIsCredUI ? 78.0f : 82.0f;
+            float textH = 30.0f;
             if (!bLightTheme)
             {
                 Gdiplus::RectF ts(0.0f, textY + 1.5f, (float)width, textH);
@@ -832,8 +841,8 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
         format.SetAlignment(Gdiplus::StringAlignmentCenter);
         format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
 
-        float textY = bIsCredUI ? 96.0f : 66.0f;
-        float textH = 34.0f;
+        float textY = bIsCredUI ? 78.0f : 66.0f;
+        float textH = 30.0f;
 
         if (!bLightTheme)
         {
@@ -865,8 +874,8 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
         format.SetAlignment(Gdiplus::StringAlignmentCenter);
         format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
 
-        float textY = bIsCredUI ? 96.0f : 78.0f;
-        float textH = 32.0f;
+        float textY = bIsCredUI ? 78.0f : 78.0f;
+        float textH = 30.0f;
 
         if (!bLightTheme)
         {
