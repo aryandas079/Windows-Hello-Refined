@@ -535,10 +535,12 @@ void FaceOverlay::RunAnimation()
 
         // Position the overlay to completely cover the horizontal separating line
         // and the PIN logo / title band, while leaving the native app title and description visible.
+        // The line is located right at ~0.215 of dlgH. Raising posY by 8px and expanding winH by 10px
+        // cleanly and completely covers the separation line in both light and dark themes.
         posX = rc.left;
-        posY = rc.top + (int)(dlgH * 0.215);
+        posY = rc.top + (int)(dlgH * 0.215) - 8;
         winW = dlgW;
-        winH = (int)(dlgH * 0.320);
+        winH = (int)(dlgH * 0.320) + 10;
         LogOverlay(L"CredUI dialog scenario: attached replacement overlay (%d,%d %dx%d)", posX, posY, winW, winH);
     }
     else
@@ -695,9 +697,9 @@ void FaceOverlay::RunAnimation()
                 int dlgW = rcSec.right - rcSec.left;
                 int dlgH = rcSec.bottom - rcSec.top;
                 int targetX = rcSec.left;
-                int targetY = rcSec.top + (int)(dlgH * 0.215);
+                int targetY = rcSec.top + (int)(dlgH * 0.215) - 8;
                 int targetW = dlgW;
-                int targetH = (int)(dlgH * 0.320);
+                int targetH = (int)(dlgH * 0.320) + 10;
 
                 if (targetX != posX || targetY != posY || targetW != winW || targetH != winH)
                 {
@@ -852,7 +854,7 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
     bool bLightTheme = false;
 
     float cx = width / 2.0f;
-    float cy = bIsCredUI ? 38.0f : 34.0f;
+    float cy = bIsCredUI ? 46.0f : 34.0f;
 
     if (bIsCredUI)
     {
@@ -957,8 +959,8 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
                 Gdiplus::Font fontMain(&ff, 11.5f, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
                 Gdiplus::Font fontSub(&ff, 10.0f, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
 
-                float mainY = 74.0f;
-                float subY = 96.0f;
+                float mainY = 82.0f;
+                float subY = 104.0f;
                 float textH = 22.0f;
 
                 if (!bLightTheme)
@@ -981,7 +983,7 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
             else
             {
                 Gdiplus::Font font(&ff, 12.0f, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
-                float textY = 78.0f;
+                float textY = 86.0f;
                 float textH = 30.0f;
                 if (!bLightTheme)
                 {
@@ -1095,7 +1097,7 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
         format.SetAlignment(Gdiplus::StringAlignmentCenter);
         format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
 
-        float textY = bIsCredUI ? 78.0f : 66.0f;
+        float textY = bIsCredUI ? 86.0f : 66.0f;
         float textH = 30.0f;
 
         if (!bLightTheme)
@@ -1128,7 +1130,7 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
         format.SetAlignment(Gdiplus::StringAlignmentCenter);
         format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
 
-        float textY = bIsCredUI ? 78.0f : 78.0f;
+        float textY = bIsCredUI ? 86.0f : 78.0f;
         float textH = 30.0f;
 
         if (!bLightTheme)
