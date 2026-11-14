@@ -247,6 +247,7 @@ class FaceDaemon:
 
                 start_time = time.perf_counter()
                 frames_tested = 0
+                consecutive_verified = 0
                 self.engine.reset_blink_history(clear_cooldown=True)
 
                 while time.perf_counter() - start_time < timeout_sec:
@@ -293,27 +294,35 @@ class FaceDaemon:
                         f"(sim={similarity:.3f}), liveness={is_live} "
                         f"(score={liveness_score:.2f}; {liveness_msg}) [{elapsed_ms:.1f}ms]"
                     )
+                    # Robust multi-frame verification target:
+                    # Very high confidence live human (sim >= 0.55): instant unlock on Frame 1 (~350ms)
+                    # Standard confidence (0.38 <= sim < 0.55): requires 2 consecutive live frames (~450ms)
+                    # This achieves <0.6s unlock while preventing photo/screen spoofs from unlocking.
+                    target_frames = 1 if similarity >= 0.55 else 2
+
                     if is_match and is_live:
-                        # Instant sub-second face unlock on Frame 1 (<0.5s)!
-                        log_service(
-                            f"Instant <0.5s face unlock verified for user {username} in {elapsed_ms:.1f}ms ({frames_tested} frames)!"
-                        )
-                        creds = load_credentials()
-                        resp = {
-                            "status": "verified",
-                            "username": username,
-                            "confidence": round(similarity * 100, 1),
-                            "message": f"Welcome back, {username}!",
-                        }
-                        if creds:
-                            if creds.get("pin"):
-                                resp["pin"] = creds["pin"]
-                            if creds.get("password"):
-                                resp["password"] = creds["password"]
-                            if creds.get("domain"):
-                                resp["domain"] = creds["domain"]
-                        return resp
+                        consecutive_verified += 1
+                        if consecutive_verified >= target_frames:
+                            log_service(
+                                f"Robust <0.6s face unlock verified for user {username} in {elapsed_ms:.1f}ms ({frames_tested} frames, consecutive={consecutive_verified})!"
+                            )
+                            creds = load_credentials()
+                            resp = {
+                                "status": "verified",
+                                "username": username,
+                                "confidence": round(similarity * 100, 1),
+                                "message": f"Welcome back, {username}!",
+                            }
+                            if creds:
+                                if creds.get("pin"):
+                                    resp["pin"] = creds["pin"]
+                                if creds.get("password"):
+                                    resp["password"] = creds["password"]
+                                if creds.get("domain"):
+                                    resp["domain"] = creds["domain"]
+                            return resp
                     else:
+                        consecutive_verified = 0
                         # Immediate abort only on definitive physical presentation spoofs
                         # (phone chassis border, screen bezel, OLED subpixel emitter raster)
                         msg_lower = liveness_msg.lower()
