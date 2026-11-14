@@ -332,12 +332,15 @@ class FaceDaemon:
                                 f"Robust <0.6s face unlock verified for user {username} in {elapsed_ms:.1f}ms ({frames_tested} frames, consecutive={consecutive_verified})!"
                             )
                             creds = load_credentials()
+                            from service.sound_config import load_sound
+                            configured_sound = load_sound()
                             resp = {
                                 "status": "verified",
                                 "username": username,
                                 "confidence": round(similarity * 100, 1),
                                 "message": f"Welcome back, {username}!",
                                 "low_light": detected_low_light,
+                                "sound": configured_sound,
                             }
                             if creds:
                                 if creds.get("pin"):

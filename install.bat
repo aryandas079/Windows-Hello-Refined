@@ -36,6 +36,7 @@ set "PYTHONW=%PROJ_DIR%\.venv\Scripts\pythonw.exe"
 set "SERVICE_PY=%PROJ_DIR%\service\face_service.py"
 set "PRESENCE_PY=%PROJ_DIR%\service\presence_service.py"
 set "PRESENCE_CONFIG_PY=%PROJ_DIR%\service\presence_config.py"
+set "SOUND_CONFIG_PY=%PROJ_DIR%\service\sound_config.py"
 set "DLL=%PROJ_DIR%\credential_provider\FaceCredentialProvider.dll"
 set "GUID={C85B5F30-5B1D-4A4A-8A87-3E3F45E412A8}"
 
@@ -103,6 +104,13 @@ if !errorLevel! neq 0 (
     echo [ERROR] Could not save the auto-lock timeout.
     pause
     exit /b 1
+)
+echo.
+
+echo [*] Configure unlock feedback sound...
+"%PYTHON%" "%SOUND_CONFIG_PY%" --interactive
+if !errorLevel! neq 0 (
+    echo [WARNING] Could not save sound preference, defaulting to standard chime.
 )
 echo.
 

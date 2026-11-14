@@ -197,8 +197,14 @@ static DWORD WINAPI PlaySpeakerSoundThread(LPVOID lpParam)
     return 0;
 }
 
-static void PlayFeedbackSound()
+static void PlayFeedbackSound(const WCHAR* soundOverride = NULL)
 {
+    if (soundOverride && _wcsicmp(soundOverride, L"none") == 0)
+    {
+        LogOverlay(L"PlayFeedbackSound: sound set to 'none' (silent).");
+        return;
+    }
+
     WCHAR assetPath[MAX_PATH] = {0};
     if (GetModuleFileNameW(g_hInst, assetPath, ARRAYSIZE(assetPath)))
     {
@@ -208,17 +214,28 @@ static void PlayFeedbackSound()
     }
 
     LPCWSTR targetSound = NULL;
-    if (PathFileExistsW(assetPath))
+    if (soundOverride && wcslen(soundOverride) > 0 && _wcsicmp(soundOverride, L"default") != 0)
     {
-        targetSound = assetPath;
+        if (PathFileExistsW(soundOverride))
+        {
+            targetSound = soundOverride;
+        }
     }
-    else if (PathFileExistsW(L"C:\\Windows\\Media\\Windows Notify.wav"))
+
+    if (!targetSound)
     {
-        targetSound = L"C:\\Windows\\Media\\Windows Notify.wav";
-    }
-    else if (PathFileExistsW(L"C:\\Windows\\Media\\Windows Unlock.wav"))
-    {
-        targetSound = L"C:\\Windows\\Media\\Windows Unlock.wav";
+        if (PathFileExistsW(assetPath))
+        {
+            targetSound = assetPath;
+        }
+        else if (PathFileExistsW(L"C:\\Windows\\Media\\Windows Notify.wav"))
+        {
+            targetSound = L"C:\\Windows\\Media\\Windows Notify.wav";
+        }
+        else if (PathFileExistsW(L"C:\\Windows\\Media\\Windows Unlock.wav"))
+        {
+            targetSound = L"C:\\Windows\\Media\\Windows Unlock.wav";
+        }
     }
 
     if (targetSound)
@@ -291,6 +308,7 @@ FaceOverlay::FaceOverlay() :
     m_winkProgress(0.0f),
     m_fadeAlpha(1.0f)
 {
+    StringCchCopyW(m_soundChoice, ARRAYSIZE(m_soundChoice), L"default");
     EnsureGdiplus();
     InitializeCriticalSection(&m_cs);
     StringCchCopyW(m_username, ARRAYSIZE(m_username), L"Aryan");
@@ -377,6 +395,17 @@ void FaceOverlay::SetLowLight(bool bLowLight)
     {
         m_bLowLight = bLowLight;
         LogOverlay(L"SetLowLight changed to: %d", bLowLight);
+    }
+    LeaveCriticalSection(&m_cs);
+}
+
+void FaceOverlay::SetSound(const WCHAR* soundChoice)
+{
+    EnterCriticalSection(&m_cs);
+    if (soundChoice && wcslen(soundChoice) > 0)
+    {
+        StringCchCopyW(m_soundChoice, ARRAYSIZE(m_soundChoice), soundChoice);
+        LogOverlay(L"SetSound changed to: %s", m_soundChoice);
     }
     LeaveCriticalSection(&m_cs);
 }
@@ -760,7 +789,7 @@ void FaceOverlay::RunAnimation()
                 if (!m_bPlayedWinkSound)
                 {
                     m_bPlayedWinkSound = true;
-                    PlayFeedbackSound();
+                    PlayFeedbackSound(m_soundChoice);
                 }
             }
             else

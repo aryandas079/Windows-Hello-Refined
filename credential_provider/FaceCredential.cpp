@@ -1032,6 +1032,13 @@ void FaceCredential::DoVerification()
             bool bLowLight = (strstr(buffer, "\"low_light\": true") != NULL);
             m_overlay.SetLowLight(bLowLight);
 
+            WCHAR soundSetting[MAX_PATH] = {0};
+            ExtractJsonString(buffer, "sound", soundSetting, ARRAYSIZE(soundSetting));
+            if (wcslen(soundSetting) > 0)
+            {
+                m_overlay.SetSound(soundSetting);
+            }
+
             if (strstr(buffer, "\"status\": \"verified\""))
             {
                 LogMsg(L"Face verified by daemon!");
