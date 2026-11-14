@@ -264,10 +264,15 @@ class FaceDaemon:
                     face, status = self.engine.detect_face(frame)
 
                     if face is not None:
-                        feature = self.engine.extract_features(frame, face)
+                        gray_check = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                        mean_b = float(np.mean(gray_check))
+                        enh_frame = self.engine.preprocess_lighting(frame) if mean_b < 65.0 else None
+                        eval_frame = enh_frame if enh_frame is not None else frame
+
+                        feature = self.engine.extract_features(eval_frame, face)
                         is_match, similarity = self.engine.match_face(feature, enrolled)
                         is_live, liveness_score, liveness_msg = self.engine.check_liveness(
-                            frame, face
+                            frame, face, enhanced=enh_frame
                         )
                         elapsed_ms = (time.perf_counter() - start_time) * 1000
                         log_service(

@@ -193,6 +193,7 @@ class FaceEngine:
         self._geom_history = deque(maxlen=25)
         self._asym_history = deque(maxlen=25)
         self._depth_history = deque(maxlen=25)
+        self._landmarks_history = deque(maxlen=10)
         self._spoof_cooldown = 0
 
     # ------------------------------------------------------------------
@@ -203,19 +204,18 @@ class FaceEngine:
         """
         Multi-stage adaptive low-light enhancement.
         Stage 1 - brightness measurement.
-        Stage 2 - adaptive gamma boost for frames with mean brightness < 65.
-        Stage 3 - CLAHE on LAB L-channel with dynamic clip limit.
-        Stage 4 - histogram equalization for extreme darkness (<25).
+        Stage 2 - adaptive gamma brightening curve for dark scenes (<75 mean).
+        Stage 3 - CLAHE on LAB L-channel with adaptive clip limit.
+        Stage 4 - histogram equalization for extreme darkness (<20 mean).
         """
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         mean_brightness = float(np.mean(gray))
 
-        # Adaptive gamma curve: smooth logarithmic mapping for dark scenes
-        if mean_brightness < 65.0:
-            gamma = max(0.28, mean_brightness / 85.0)
-            inv_gamma = 1.0 / max(gamma, 0.1)
+        # Adaptive gamma brightening: smooth gamma curve with exponent < 1.0 to elevate dark shadows
+        if mean_brightness < 75.0:
+            gamma = 0.40 + 0.45 * (mean_brightness / 75.0)
             lut = np.array(
-                [min(255, int((i / 255.0) ** inv_gamma * 255)) for i in range(256)],
+                [min(255, int((i / 255.0) ** gamma * 255.0)) for i in range(256)],
                 dtype=np.uint8
             )
             frame = cv2.LUT(frame, lut)
@@ -228,7 +228,7 @@ class FaceEngine:
         l_enh = clahe.apply(l)
 
         # Extreme dark: also equalize
-        if mean_brightness < 25.0:
+        if mean_brightness < 20.0:
             l_enh = cv2.equalizeHist(l_enh)
 
         return cv2.cvtColor(cv2.merge((l_enh, a, b)), cv2.COLOR_LAB2BGR)
@@ -238,9 +238,12 @@ class FaceEngine:
         2D Fourier Transform (FFT) analysis of facial skin micro-texture.
         Detects periodic subpixel raster grids and moire frequencies of LCD/OLED screens.
         """
-        h, w = gray_roi.shape
-        if h < 24 or w < 24:
+        if gray_roi is None or gray_roi.size == 0:
             return False, 0.0
+        h, w = gray_roi.shape
+        if h < 32 or w < 32:
+            gray_roi = cv2.resize(gray_roi, (48, 48))
+            h, w = 48, 48
 
         f = np.fft.fft2(gray_roi)
         fshift = np.fft.fftshift(f)
@@ -262,80 +265,113 @@ class FaceEngine:
     def detect_screen_bezel(self, frame, face):
         """
         Detects smartphone/tablet chassis borders, screen bezels, and rectangular display frames
-        surrounding the face bounding box using Canny edge, Hough lines, and rectangular contour analysis.
+        surrounding the face bounding box using full-frame downscaled Hough lines, bilateral contrast
+        steps, and rectangular contour analysis.
         """
+        if face is None:
+            return False
         H, W = frame.shape[:2]
         fx, fy, fw, fh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
 
-        pad_w = int(fw * 0.45)
-        pad_h = int(fh * 0.45)
-        x1, y1 = max(0, fx - pad_w), max(0, fy - pad_h)
-        x2, y2 = min(W, fx + fw + pad_w), min(H, fy + fh + pad_h)
+        # Downscale for ultra-fast line detection (3-5ms)
+        scale = 320.0 / W
+        small_w = 320
+        small_h = int(H * scale)
+        small = cv2.resize(frame, (small_w, small_h))
+        gray_small = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
 
-        surround = frame[y1:y2, x1:x2]
-        if surround.size == 0 or surround.shape[0] < 40 or surround.shape[1] < 40:
-            return False
+        s_fx = int(fx * scale)
+        s_fy = int(fy * scale)
+        s_fw = int(fw * scale)
+        s_fh = int(fh * scale)
 
-        gray = cv2.cvtColor(surround, cv2.COLOR_BGR2GRAY)
-        edges = cv2.Canny(gray, 60, 150)
+        edges = cv2.Canny(gray_small, 40, 120)
 
-        # 1. Check for prominent rectangular contours tightly enclosing the face
+        # 1. Check for rectangular contours enclosing the face with smartphone/tablet aspect ratio
         contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if (fw * fh * 0.6) < area < (fw * fh * 3.5):
+            if (s_fw * s_fh * 0.7) < area < (s_fw * s_fh * 8.0):
                 peri = cv2.arcLength(cnt, True)
                 approx = cv2.approxPolyDP(cnt, 0.03 * peri, True)
                 if len(approx) == 4:
                     rx, ry, rw, rh = cv2.boundingRect(approx)
-                    # Must enclose the face center
-                    fc_x = fx - x1 + fw // 2
-                    fc_y = fy - y1 + fh // 2
+                    fc_x = s_fx + s_fw // 2
+                    fc_y = s_fy + s_fh // 2
                     if rx <= fc_x <= rx + rw and ry <= fc_y <= ry + rh:
                         aspect = max(rw, rh) / max(1, min(rw, rh))
-                        if 1.2 <= aspect <= 2.4:
+                        if 1.2 <= aspect <= 2.5:
                             return True
 
-        # 2. Check for straight vertical and horizontal bezel lines flanking both sides of the face
-        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=40, minLineLength=int(fh * 0.55), maxLineGap=10)
-        if lines is None:
-            return False
-
-        vl = []
-        vr = []
-        ht = []
-        hb = []
-
-        for l in lines:
-            pts = l.flatten()
-            if len(pts) == 4:
-                lx1, ly1, lx2, ly2 = pts
+        # 2. Check for straight vertical bezel lines flanking both sides of the face
+        min_len = max(22, int(s_fh * 0.45))
+        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 26, minLineLength=min_len, maxLineGap=12)
+        if lines is not None:
+            vl = []
+            vr = []
+            for l in lines:
+                lx1, ly1, lx2, ly2 = l.flatten()
                 dx, dy = abs(lx2 - lx1), abs(ly2 - ly1)
-                if dy > dx * 2.8:  # Strict vertical line
+                if dy > dx * 2.2:  # Strict vertical line
                     mid_x = (lx1 + lx2) // 2
-                    if mid_x < (fx - x1):
-                        vl.append(mid_x)
-                    elif mid_x > (fx - x1 + fw):
-                        vr.append(mid_x)
-                elif dx > dy * 2.8: # Strict horizontal line
                     mid_y = (ly1 + ly2) // 2
-                    if mid_y < (fy - y1):
-                        ht.append(mid_y)
-                    elif mid_y > (fy - y1 + fh):
-                        hb.append(mid_y)
+                    if abs(mid_y - (s_fy + s_fh // 2)) < s_fh * 1.5:
+                        if mid_x < s_fx:
+                            vl.append(mid_x)
+                        elif mid_x > (s_fx + s_fw):
+                            vr.append(mid_x)
 
-        # A smartphone or tablet held in front of the camera exhibits parallel bezel lines flanking the face
-        for xl in vl:
-            for xr in vr:
-                sep = xr - xl
-                if fw < sep < (fw * 1.85):
-                    return True
+            # Check bilateral vertical line pairs flanking the face
+            for xl in set(vl):
+                for xr in set(vr):
+                    sep = xr - xl
+                    if s_fw * 1.15 <= sep <= s_fw * 5.5:
+                        y_center = s_fy + s_fh // 2
+                        y1 = max(0, y_center - 20)
+                        y2 = min(small_h, y_center + 20)
+                        if y2 - y1 >= 10:
+                            # Sample left bezel: outside chassis vs inside display
+                            out_l = float(np.mean(gray_small[y1:y2, max(0, xl - 12):max(1, xl - 2)]))
+                            in_l  = float(np.mean(gray_small[y1:y2, min(small_w - 2, xl + 2):min(small_w, xl + 12)]))
+                            # Sample right bezel: inside display vs outside chassis
+                            in_r  = float(np.mean(gray_small[y1:y2, max(0, xr - 12):max(1, xr - 2)]))
+                            out_r = float(np.mean(gray_small[y1:y2, min(small_w - 2, xr + 2):min(small_w, xr + 12)]))
+                            contrast_l = in_l - out_l
+                            contrast_r = in_r - out_r
 
-        for yt in ht:
-            for yb in hb:
-                sep_y = yb - yt
-                if fh < sep_y < (fh * 1.85):
-                    return True
+                            # A phone screen display exhibits bright interior and dark bezel exterior on both sides
+                            if (contrast_l > 15.0 and contrast_r > 15.0) or (contrast_l + contrast_r > 40.0):
+                                return True
+                            # Strong geometric chassis line pair with sharp borders
+                            if abs(contrast_l) > 28.0 and abs(contrast_r) > 28.0:
+                                return True
+
+        # 3. Also check close-up face crop for phone held very close to the lens
+        pad_w = int(fw * 0.45)
+        pad_h = int(fh * 0.45)
+        x1_crop, y1_crop = max(0, fx - pad_w), max(0, fy - pad_h)
+        x2_crop, y2_crop = min(W, fx + fw + pad_w), min(H, fy + fh + pad_h)
+        surround = frame[y1_crop:y2_crop, x1_crop:x2_crop]
+        if surround.size > 0 and surround.shape[0] >= 40 and surround.shape[1] >= 40:
+            gray_crop = cv2.cvtColor(surround, cv2.COLOR_BGR2GRAY)
+            edges_crop = cv2.Canny(gray_crop, 60, 150)
+            lines_crop = cv2.HoughLinesP(edges_crop, 1, np.pi / 180, 40, minLineLength=int(fh * 0.55), maxLineGap=10)
+            if lines_crop is not None:
+                vl_crop, vr_crop = [], []
+                for l in lines_crop:
+                    lx1, ly1, lx2, ly2 = l.flatten()
+                    dx, dy = abs(lx2 - lx1), abs(ly2 - ly1)
+                    if dy > dx * 2.8:
+                        mid_x = (lx1 + lx2) // 2
+                        if mid_x < (fx - x1_crop):
+                            vl_crop.append(mid_x)
+                        elif mid_x > (fx - x1_crop + fw):
+                            vr_crop.append(mid_x)
+                for xl in vl_crop:
+                    for xr in vr_crop:
+                        sep = xr - xl
+                        if fw < sep < (fw * 1.85):
+                            return True
 
         return False
 
@@ -484,7 +520,7 @@ class FaceEngine:
 
     def detect_face(self, frame):
         """
-        Detects the primary face using YuNet with dual-pass low-light recovery.
+        Detects the primary face using YuNet with multi-pass adaptive low-light recovery.
         Returns (face [15 floats], status_msg) or (None, msg).
         """
         h, w = frame.shape[:2]
@@ -494,6 +530,16 @@ class FaceEngine:
         if faces is None or len(faces) == 0:
             enh = self.preprocess_lighting(frame)
             _, faces = self.detector.detect(enh)
+
+        if faces is None or len(faces) == 0:
+            # Low-light recovery pass for dim/night environments (mean brightness < 65)
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            if np.mean(gray) < 65.0:
+                orig_th = self.detector.getScoreThreshold()
+                self.detector.setScoreThreshold(0.22)
+                enh = self.preprocess_lighting(frame)
+                _, faces = self.detector.detect(enh)
+                self.detector.setScoreThreshold(orig_th)
 
         if faces is None or len(faces) == 0:
             return None, "No face detected"
@@ -752,6 +798,38 @@ class FaceEngine:
         geom_val = float(d_eyes / (d_nc + 1e-6))
         self._geom_history.append(geom_val)
 
+        # Track key facial landmark 2D coordinates for planar homography test
+        key_pts_2d = np.array([
+            [landmarks[1].x * W, landmarks[1].y * H],     # Nose tip
+            [landmarks[33].x * W, landmarks[33].y * H],   # Left eye outer
+            [landmarks[263].x * W, landmarks[263].y * H], # Right eye outer
+            [landmarks[61].x * W, landmarks[61].y * H],   # Mouth left
+            [landmarks[291].x * W, landmarks[291].y * H], # Mouth right
+            [landmarks[152].x * W, landmarks[152].y * H], # Chin
+            [landmarks[199].x * W, landmarks[199].y * H], # Lower jaw
+            [landmarks[10].x * W, landmarks[10].y * H],   # Forehead
+        ], dtype=np.float32)
+
+        is_planar_motion = False
+        if len(self._landmarks_history) >= 1:
+            prev_pts = self._landmarks_history[-1]
+            shift = float(np.mean(np.linalg.norm(key_pts_2d - prev_pts, axis=1)))
+            # If the face or device moved slightly in space (e.g. hand tremor)
+            if shift >= 1.5:
+                H_mat, _ = cv2.findHomography(prev_pts, key_pts_2d, cv2.RANSAC, 2.5)
+                if H_mat is not None:
+                    pred_pts = cv2.perspectiveTransform(prev_pts.reshape(-1, 1, 2), H_mat).reshape(-1, 2)
+                    res_err = float(np.mean(np.linalg.norm(pred_pts - key_pts_2d, axis=1)))
+                    # Rigid 2D screen/photo moving in hand has near-zero homography residual (< 0.22 px)
+                    if res_err < 0.22:
+                        is_planar_motion = True
+        self._landmarks_history.append(key_pts_2d)
+
+        if is_planar_motion:
+            self._spoof_cooldown = 15
+            self.reset_blink_history()
+            return False, 0.05, "Flat 2D screen presentation detected under motion (phone video/screen spoof)"
+
         # Blendshapes tracking
         bs_val = 0.0
         if blendshapes:
@@ -763,25 +841,28 @@ class FaceEngine:
             self._blendshape_history.append(bs_val)
 
         # Evaluate temporal biological traits:
-        # Fast verification dynamics for instant <0.5s unlocking:
-        # When all dense 3D depth, skin texture, color spectrum, bezel, and glare checks pass,
-        # genuine human face is verified immediately without mandatory blink delays!
-        if len(self._ear_values) < 8:
-            dynamic_score = 0.90
-            dynamic_msg = "Dense 3D biometric depth verified"
+        # Fast physiological verification for <0.5s unlocking:
+        # During the first 3 frames (~100-130ms), collect baseline signals without premature bypass.
+        # From frame 4 onwards, genuine human ocular saccades, micro-sway, or micro-expression grant verification.
+        n_frames = len(self._ear_values)
+        if n_frames < 4:
+            dynamic_score = 0.35
+            dynamic_msg = "Gathering physiological baseline..."
+            is_gathering = True
         else:
+            is_gathering = False
             ear_min, ear_max = min(self._ear_values), max(self._ear_values)
             ear_span = ear_max - ear_min
-            iris_span = max(self._iris_history) - min(self._iris_history)
+            iris_span = (max(self._iris_history) - min(self._iris_history)) if self._iris_history else 0.0
             bs_span = (max(self._blendshape_history) - min(self._blendshape_history)) if self._blendshape_history else 0.0
             asym_std = float(np.std(self._asym_history)) if len(self._asym_history) >= 4 else 0.0
             geom_std = float(np.std(self._geom_history)) if len(self._geom_history) >= 4 else 0.0
 
-            # Physiological thresholds verified against physical human motion:
-            is_blink = (ear_span >= 0.055 and ear_min < 0.20 and ear_max > 0.24) or (bs_span >= 0.35)
-            is_ocular = (iris_span >= 0.020)   # Genuine gaze shift saccade
-            is_expression = (bs_span >= 0.055) # Genuine facial muscle movement
-            is_parallax = (asym_std >= 0.0055 or geom_std >= 0.0065) # Genuine 3D head movement parallax
+            # Physiological thresholds of a live human:
+            is_blink = (ear_span >= 0.048 and ear_min < 0.22 and ear_max > 0.24) or (bs_span >= 0.30)
+            is_ocular = (iris_span >= 0.012)   # Ocular micro-saccades
+            is_expression = (bs_span >= 0.035) # Genuine facial muscle movement
+            is_parallax = (asym_std >= 0.0035 or geom_std >= 0.0045) # 3D head micro-sway parallax
 
             if is_blink:
                 dynamic_score = 1.0
@@ -796,13 +877,17 @@ class FaceEngine:
                 dynamic_score = 0.90
                 dynamic_msg = "Micro-expression verified"
             else:
-                dynamic_score = 0.18
-                dynamic_msg = "Motionless planar presentation"
+                dynamic_score = 0.05
+                dynamic_msg = "Motionless presentation"
 
-            # Motionless presentation rejection after 10 frames (~400ms motionless photo/screen)
-            if len(self._ear_values) >= 10 and dynamic_score <= 0.20:
+            # Motionless presentation rejection after 5+ frames (~160ms motionless photo/screen)
+            if n_frames >= 5 and dynamic_score <= 0.10:
                 self._spoof_cooldown = 15
-                return False, 0.08, "Static photo / motionless face detected (spoof)"
+                self.reset_blink_history()
+                return False, 0.05, "Static photo / motionless display detected (spoof)"
+
+        if is_gathering:
+            return False, 0.45, f"Verifying physiological dynamics ({dynamic_msg})"
 
         # Texture score calibrated on pure human skin
         skin_lap_val = cheek_lap if has_cheek_skin else lap_var
@@ -908,4 +993,5 @@ class FaceEngine:
         self._geom_history.clear()
         self._asym_history.clear()
         self._depth_history.clear()
+        self._landmarks_history.clear()
         self._spoof_cooldown = 0

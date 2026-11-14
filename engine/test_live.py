@@ -68,7 +68,7 @@ def run_live_test(camera_index=0):
                 x, y, fw, fh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
 
                 if not is_live:
-                    if "analyzing" in live_msg.lower() or "gathering" in live_msg.lower():
+                    if "analyzing" in live_msg.lower() or "gathering" in live_msg.lower() or "verifying" in live_msg.lower():
                         status_text = "VERIFYING BIOMETRICS... LOOK AT CAMERA"
                         status_color = (0, 215, 255)  # Bright Gold / Yellow
                         score_text = f"Liveness: {live_score * 100:.1f}% | {live_msg}"
