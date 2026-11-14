@@ -249,6 +249,7 @@ class FaceDaemon:
                 frames_tested = 0
                 consecutive_verified = 0
                 self.engine.reset_blink_history(clear_cooldown=True)
+                detected_low_light = False
 
                 while time.perf_counter() - start_time < timeout_sec:
                     ret, frame = self.camera.read()
@@ -256,6 +257,11 @@ class FaceDaemon:
                         continue
 
                     frames_tested += 1
+                    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    mean_luminance = float(np.mean(gray_frame))
+                    if mean_luminance < 75.0:
+                        detected_low_light = True
+
                     face, status = self.engine.detect_face(frame)
 
                     if face is None:
@@ -312,6 +318,7 @@ class FaceDaemon:
                                 "username": username,
                                 "confidence": round(similarity * 100, 1),
                                 "message": f"Welcome back, {username}!",
+                                "low_light": detected_low_light,
                             }
                             if creds:
                                 if creds.get("pin"):
@@ -331,11 +338,11 @@ class FaceDaemon:
                         )
                         if is_hard_spoof:
                             log_service(f"HARD SPOOF DETECTED: {liveness_msg}. Immediately aborting verification session.")
-                            return {"status": "failed", "message": f"Spoof detected: {liveness_msg}"}
+                            return {"status": "failed", "message": f"Spoof detected: {liveness_msg}", "low_light": detected_low_light}
 
                 elapsed_total = (time.perf_counter() - start_time) * 1000
                 log_service(f"Face verification timed out after {frames_tested} frames ({elapsed_total:.1f}ms).")
-                return {"status": "failed", "message": "Face verification timed out"}
+                return {"status": "failed", "message": "Face verification timed out", "low_light": detected_low_light}
             finally:
                 # ALWAYS release camera hardware immediately so LED turns off!
                 self.release_camera()

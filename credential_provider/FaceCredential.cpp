@@ -1029,6 +1029,9 @@ void FaceCredential::DoVerification()
             buffer[bytesRead] = '\0';
             LogMsg(L"DoVerification: pipe response received (%d bytes)", bytesRead);
 
+            bool bLowLight = (strstr(buffer, "\"low_light\": true") != NULL);
+            m_overlay.SetLowLight(bLowLight);
+
             if (strstr(buffer, "\"status\": \"verified\""))
             {
                 LogMsg(L"Face verified by daemon!");

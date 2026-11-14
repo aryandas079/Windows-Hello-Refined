@@ -661,8 +661,11 @@ class FaceEngine:
             self.reset_blink_history(clear_cooldown=False)
             return False, 0.05, f"Display screen subpixel frequency grid detected (face_fft={face_fft_ratio:.3f} > 0.760)"
 
-        if lap_var < 10.0:
-            return False, 0.05, "Extreme blur or flat paper print detected"
+        # In low lighting, camera noise reduction and low contrast naturally lower Laplacian variance
+        mean_b = float(np.mean(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)))
+        min_lap_thresh = 3.0 if mean_b < 50.0 else (5.0 if mean_b < 75.0 else 10.0)
+        if lap_var < min_lap_thresh:
+            return False, 0.05, f"Extreme blur or flat paper print detected (lap_var={lap_var:.1f} < {min_lap_thresh})"
         if lap_var > 650.0:
             self.reset_blink_history(clear_cooldown=False)
             return False, 0.05, f"Digital screen high-frequency raster detected (face_lap={lap_var:.0f} > 650)"

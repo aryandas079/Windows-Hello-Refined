@@ -19,6 +19,7 @@ public:
 
     void Show(const WCHAR* username = L"Aryan", int scenario = 1);
     void SetState(OVERLAY_STATE state, const WCHAR* customText = nullptr);
+    void SetLowLight(bool bLowLight);
     void Hide(bool bForce = false);
 
 private:
@@ -41,6 +42,7 @@ private:
     DWORD m_verifiedTime;
     DWORD m_failedTime;
     bool m_bPlayedWinkSound;
+    bool m_bLowLight;
     float m_spinProgress;   // 0.0 to 1.0 during spin
     float m_winkProgress;   // 0.0 to 1.0 during wink
     float m_fadeAlpha;      // 0.0 to 1.0

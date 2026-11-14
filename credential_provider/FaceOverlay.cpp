@@ -285,6 +285,7 @@ FaceOverlay::FaceOverlay() :
     m_verifiedTime(0),
     m_failedTime(0),
     m_bPlayedWinkSound(false),
+    m_bLowLight(false),
     m_scenario(1),
     m_spinProgress(0.0f),
     m_winkProgress(0.0f),
@@ -322,6 +323,7 @@ void FaceOverlay::Show(const WCHAR* username, int scenario)
     m_verifiedTime = 0;
     m_failedTime = 0;
     m_bPlayedWinkSound = false;
+    m_bLowLight = false;
     m_spinProgress = 0.0f;
     m_winkProgress = 0.0f;
     m_fadeAlpha = 1.0f;
@@ -364,6 +366,17 @@ void FaceOverlay::SetState(OVERLAY_STATE state, const WCHAR* customText)
         m_failedTime = GetTickCount();
         StringCchCopyW(m_statusText, ARRAYSIZE(m_statusText), customText ? customText : L"Couldn't recognize face. Use PIN.");
         LogOverlay(L"State changed to OVERLAY_FAILED (%s)", m_statusText);
+    }
+    LeaveCriticalSection(&m_cs);
+}
+
+void FaceOverlay::SetLowLight(bool bLowLight)
+{
+    EnterCriticalSection(&m_cs);
+    if (m_bLowLight != bLowLight)
+    {
+        m_bLowLight = bLowLight;
+        LogOverlay(L"SetLowLight changed to: %d", bLowLight);
     }
     LeaveCriticalSection(&m_cs);
 }
@@ -931,25 +944,84 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
         }
         g.FillEllipse(&accentBrush, cx + gazeX - rScan, cy + 2.0f - (pupilH / 2.0f), rScan * 2.0f, pupilH);
 
-        // On Lock Screen: Keep clean look (no status text while scanning, matching Image 1)
-        // On CredUI: Display "Looking for you..."
+        // Status and Low Light subtitles below the looking for you eye animation:
+        Gdiplus::FontFamily ff(L"Segoe UI");
+        Gdiplus::StringFormat sf;
+        sf.SetAlignment(Gdiplus::StringAlignmentCenter);
+        sf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+
         if (bIsCredUI)
         {
-            Gdiplus::FontFamily ff(L"Segoe UI");
-            Gdiplus::Font font(&ff, 12.0f, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
-            Gdiplus::StringFormat sf;
-            sf.SetAlignment(Gdiplus::StringAlignmentCenter);
-            sf.SetLineAlignment(Gdiplus::StringAlignmentCenter);
-
-            float textY = bIsCredUI ? 78.0f : 82.0f;
-            float textH = 30.0f;
-            if (!bLightTheme)
+            if (m_bLowLight)
             {
-                Gdiplus::RectF ts(0.0f, textY + 1.5f, (float)width, textH);
-                g.DrawString(m_statusText, -1, &font, ts, &sf, &shadowBrush);
+                Gdiplus::Font fontMain(&ff, 11.5f, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
+                Gdiplus::Font fontSub(&ff, 10.0f, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
+
+                float mainY = 74.0f;
+                float subY = 96.0f;
+                float textH = 22.0f;
+
+                if (!bLightTheme)
+                {
+                    Gdiplus::RectF tsMain(0.0f, mainY + 1.5f, (float)width, textH);
+                    g.DrawString(m_statusText, -1, &fontMain, tsMain, &sf, &shadowBrush);
+
+                    Gdiplus::RectF tsSub(0.0f, subY + 1.5f, (float)width, textH);
+                    g.DrawString(L"Low lighting detected", -1, &fontSub, tsSub, &sf, &shadowBrush);
+                }
+
+                Gdiplus::RectF trMain(0.0f, mainY, (float)width, textH);
+                g.DrawString(m_statusText, -1, &fontMain, trMain, &sf, &textBrush);
+
+                Gdiplus::Color subColor = bLightTheme ? Gdiplus::Color(255, 100, 100, 100) : Gdiplus::Color(230, 215, 215, 215);
+                Gdiplus::SolidBrush subBrush(subColor);
+                Gdiplus::RectF trSub(0.0f, subY, (float)width, textH);
+                g.DrawString(L"Low lighting detected", -1, &fontSub, trSub, &sf, &subBrush);
             }
-            Gdiplus::RectF tr(0.0f, textY, (float)width, textH);
-            g.DrawString(m_statusText, -1, &font, tr, &sf, &textBrush);
+            else
+            {
+                Gdiplus::Font font(&ff, 12.0f, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
+                float textY = 78.0f;
+                float textH = 30.0f;
+                if (!bLightTheme)
+                {
+                    Gdiplus::RectF ts(0.0f, textY + 1.5f, (float)width, textH);
+                    g.DrawString(m_statusText, -1, &font, ts, &sf, &shadowBrush);
+                }
+                Gdiplus::RectF tr(0.0f, textY, (float)width, textH);
+                g.DrawString(m_statusText, -1, &font, tr, &sf, &textBrush);
+            }
+        }
+        else
+        {
+            // On Lock Screen: Keep clean look normally;
+            // When low light is detected, mention low lighting below the looking for you eye animation
+            if (m_bLowLight)
+            {
+                Gdiplus::Font fontMain(&ff, 12.0f, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
+                Gdiplus::Font fontSub(&ff, 10.5f, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
+
+                float mainY = 56.0f;
+                float subY = 76.0f;
+                float textH = 20.0f;
+
+                if (!bLightTheme)
+                {
+                    Gdiplus::RectF tsMain(0.0f, mainY + 1.5f, (float)width, textH);
+                    g.DrawString(L"Looking for you...", -1, &fontMain, tsMain, &sf, &shadowBrush);
+
+                    Gdiplus::RectF tsSub(0.0f, subY + 1.5f, (float)width, textH);
+                    g.DrawString(L"Low lighting detected", -1, &fontSub, tsSub, &sf, &shadowBrush);
+                }
+
+                Gdiplus::RectF trMain(0.0f, mainY, (float)width, textH);
+                g.DrawString(L"Looking for you...", -1, &fontMain, trMain, &sf, &textBrush);
+
+                Gdiplus::Color subColor = Gdiplus::Color(220, 215, 215, 215);
+                Gdiplus::SolidBrush subBrush(subColor);
+                Gdiplus::RectF trSub(0.0f, subY, (float)width, textH);
+                g.DrawString(L"Low lighting detected", -1, &fontSub, trSub, &sf, &subBrush);
+            }
         }
     }
     else if (m_state == OVERLAY_VERIFIED)
