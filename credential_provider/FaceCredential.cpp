@@ -336,7 +336,20 @@ void FaceCredential::StartVerification()
 DWORD WINAPI FaceCredential::VerificationThread(LPVOID lpParam)
 {
     FaceCredential* pThis = reinterpret_cast<FaceCredential*>(lpParam);
+    HDESK hInputDesk = OpenInputDesktop(0, FALSE, GENERIC_ALL);
+    if (!hInputDesk)
+    {
+        hInputDesk = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_SWITCHDESKTOP);
+    }
+    if (hInputDesk)
+    {
+        SetThreadDesktop(hInputDesk);
+    }
     pThis->DoVerification();
+    if (hInputDesk)
+    {
+        CloseDesktop(hInputDesk);
+    }
     EnterCriticalSection(&pThis->m_cs);
     if (pThis->m_hThread)
     {
@@ -889,7 +902,7 @@ static void EnsureDaemonRunning()
         NULL,
         NULL,
         FALSE,
-        CREATE_NO_WINDOW | DETACHED_PROCESS,
+        CREATE_NO_WINDOW | DETACHED_PROCESS | 0x01000000, // 0x01000000 = CREATE_BREAKAWAY_FROM_JOB
         NULL,
         dllPath, // Set working directory to project root
         &si,
@@ -997,6 +1010,7 @@ void FaceCredential::DoVerification()
         {
             LogMsg(L"DoVerification: could not connect to pipe (err=%lu). Retrying...", GetLastError());
             Sleep(500);
+            EnsureDaemonRunning();
             continue;
         }
 
