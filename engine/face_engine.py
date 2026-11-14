@@ -654,7 +654,7 @@ class FaceEngine:
 
         # Layer 0: Handheld smartphone / tablet chassis & screen bezel detection
         if self.detect_screen_bezel(frame, face):
-            self._spoof_cooldown = 35
+            self._spoof_cooldown = 50
             self.reset_blink_history(clear_cooldown=False)
             return False, 0.05, "Digital screen / phone chassis bezel detected (phone spoof)"
 

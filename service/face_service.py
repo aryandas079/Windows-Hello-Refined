@@ -87,7 +87,7 @@ class FaceDaemon:
 
         while True:
             try:
-                time.sleep(0.35)
+                time.sleep(0.04)
                 hDesk = user32.OpenInputDesktop(0, False, 0x0001)
                 if not hDesk:
                     continue
@@ -101,18 +101,18 @@ class FaceDaemon:
                 # Detect transition into locked state (Winlogon desktop)
                 if cur_desktop == "Winlogon" and last_desktop != "Winlogon":
                     log_service("Workstation locked / Winlogon desktop detected. Lifting lock screen curtain with VK_UP & pre-warming camera for <0.5s face unlock...")
-                    time.sleep(0.15)
+                    time.sleep(0.02)
                     # Use VK_UP (0x26) with KEYEVENTF_EXTENDEDKEY (1) instead of VK_SPACE
                     # to lift the lock screen curtain cleanly without inserting a space/dot into the PIN box!
                     user32.keybd_event(0x26, 0x48, 1, 0)
-                    time.sleep(0.02)
+                    time.sleep(0.01)
                     user32.keybd_event(0x26, 0x48, 1 | 2, 0)
                     with self.camera_lock:
                         self.ensure_camera()
 
                 last_desktop = cur_desktop
             except Exception:
-                time.sleep(1.0)
+                time.sleep(0.5)
 
     def _is_locked(self):
         """Return True when the active input desktop is the secure Winlogon desktop."""
@@ -287,7 +287,10 @@ class FaceDaemon:
                         )
                         if is_match and is_live:
                             consecutive_verified += 1
-                            if consecutive_verified >= MIN_LIVENESS_FRAMES:
+                            # Ultra-fast unlock: high-confidence genuine match (sim >= 0.48) verifies on Frame 1 (<0.4s)!
+                            # Lower similarity (0.38 - 0.48) requires 2 consecutive frames for safety.
+                            target_frames = 1 if similarity >= 0.48 else MIN_LIVENESS_FRAMES
+                            if consecutive_verified >= target_frames:
                                 log_service(
                                     f"Instant <0.5s face unlock verified for user {username} in {elapsed_ms:.1f}ms ({frames_tested} frames)!"
                                 )

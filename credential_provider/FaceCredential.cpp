@@ -761,9 +761,9 @@ static DWORD WINAPI PinSimulationThread(LPVOID lpParam)
 
     if (params->bIsCredUI)
     {
-        // CredUI scenario: wait for complete Windows Hello celebration (smile, wink, chime) before typing PIN
-        LogMsg(L"PinSimulationThread: waiting for complete Windows Hello celebration animation on CredUI dialog...");
-        Sleep(1350);
+        // CredUI scenario: short smooth delay so the welcome smile renders before typing PIN (<0.5s total unlock)
+        LogMsg(L"PinSimulationThread: swift CredUI PIN submission...");
+        Sleep(120);
 
         // Ensure CredUI dialog window has focus
         HWND hwndDlg = FindWindowW(L"Credential Dialog Xaml Host", L"Windows Security");
@@ -777,23 +777,22 @@ static DWORD WINAPI PinSimulationThread(LPVOID lpParam)
         }
 
         SetForegroundWindow(hwndDlg);
-        Sleep(40);
+        Sleep(20);
     }
     else
     {
         // Lock screen scenario: the lock screen curtain is lifted cleanly by the service with VK_UP,
         // so NO space or dot was typed into the PIN box. The field is clean and focused.
-        // We avoid sending VK_UP here, because that would move focus away from the PIN box.
         LogMsg(L"PinSimulationThread: preparing clean lock-screen PIN field...");
         for (int i = 0; i < 4; i++)
         {
             FastSendKey(VK_BACK);
         }
-        Sleep(40);
+        Sleep(20);
     }
 
-    // Step 2: Type the complete PIN once with a short, consistent cadence.
-    LogMsg(L"PinSimulationThread: typing %d characters smoothly...", (int)wcslen(params->pin));
+    // Step 2: Type the complete PIN once with a rapid, crisp cadence.
+    LogMsg(L"PinSimulationThread: typing %d characters swiftly...", (int)wcslen(params->pin));
     for (size_t i = 0; i < wcslen(params->pin); i++)
     {
         WCHAR ch = params->pin[i];
@@ -802,21 +801,21 @@ static DWORD WINAPI PinSimulationThread(LPVOID lpParam)
             WORD vk = (WORD)('0' + (ch - L'0'));
             BYTE scan = (BYTE)MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
             keybd_event((BYTE)vk, scan, 0, 0);
-            Sleep(15);
+            Sleep(8);
             keybd_event((BYTE)vk, scan, KEYEVENTF_KEYUP, 0);
-            Sleep(15);
+            Sleep(8);
         }
         else
         {
             FastSendChar(ch);
-            Sleep(20);
+            Sleep(10);
         }
     }
 
-    Sleep(70);
+    Sleep(30);
     BYTE enterScan = (BYTE)MapVirtualKeyW(VK_RETURN, MAPVK_VK_TO_VSC);
     keybd_event(VK_RETURN, enterScan, 0, 0);
-    Sleep(20);
+    Sleep(10);
     keybd_event(VK_RETURN, enterScan, KEYEVENTF_KEYUP, 0);
     LogMsg(L"PinSimulationThread: credentials entered and submitted.");
 
