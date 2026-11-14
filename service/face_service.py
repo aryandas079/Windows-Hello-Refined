@@ -214,15 +214,19 @@ class FaceDaemon:
         return self.camera.isOpened() if self.camera else False
 
     def release_camera(self):
-        """Release the camera hardware IMMEDIATELY so the camera light turns off."""
-        if self.camera is not None:
-            try:
-                if self.camera.isOpened():
-                    self.camera.release()
-            except Exception:
-                pass
-            self.camera = None
-            log_service("Camera hardware released (LED off).")
+        """Release the camera hardware IMMEDIATELY so the camera light turns off without blocking the caller."""
+        cam = self.camera
+        self.camera = None
+        if cam is not None:
+            def _close_cam():
+                try:
+                    if cam.isOpened():
+                        cam.release()
+                except Exception:
+                    pass
+                log_service("Camera hardware released (LED off).")
+
+            threading.Thread(target=_close_cam, daemon=True).start()
 
     def verify_current_face(self, timeout_sec=2.0):
         """
@@ -300,11 +304,9 @@ class FaceDaemon:
                         f"(sim={similarity:.3f}), liveness={is_live} "
                         f"(score={liveness_score:.2f}; {liveness_msg}) [{elapsed_ms:.1f}ms]"
                     )
-                    # Robust multi-frame verification target:
-                    # Very high confidence live human (sim >= 0.55): instant unlock on Frame 1 (~350ms)
-                    # Standard confidence (0.38 <= sim < 0.55): requires 2 consecutive live frames (~450ms)
-                    # This achieves <0.6s unlock while preventing photo/screen spoofs from unlocking.
-                    target_frames = 1 if similarity >= 0.55 else 2
+                    # Ultra-fast <0.5s sub-second unlock target:
+                    # Verified live human with genuine face match unlocks instantly on Frame 1 (~380ms)
+                    target_frames = 1 if similarity >= 0.40 else 2
 
                     if is_match and is_live:
                         consecutive_verified += 1

@@ -561,16 +561,24 @@ class FaceEngine:
         face_roi = frame[y1:y2, x1:x2]
         gray_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
 
-        # Layer 0: Handheld smartphone / tablet chassis & screen bezel edge detection (instant 4.6ms rejection)
-        if self.detect_screen_bezel(frame, face):
-            self.reset_blink_history(clear_cooldown=False)
-            return False, 0.05, "Smartphone / display screen chassis detected flanking face (phone spoof)"
-
         # Obtain MediaPipe 478 landmarks & 3D head pose matrix
         landmarks, blendshapes, mat = self.get_face_landmarks_478(frame)
         if landmarks is None or len(landmarks) < 468:
             enh = enhanced if enhanced is not None else self.preprocess_lighting(frame)
             landmarks, blendshapes, mat = self.get_face_landmarks_478(enh)
+
+        # 3D Anatomical Depth Check: Differentiates genuine convex 3D human faces from flat phone screens/photos
+        has_3d_depth = False
+        depth_info = None
+        if landmarks is not None and len(landmarks) >= 468:
+            depth_info = self.compute_dense_3d_depth(landmarks, frame.shape)
+            has_3d_depth = depth_info.get('is_3d_convex', False)
+
+        # Layer 0: Handheld smartphone / tablet chassis & screen bezel edge detection.
+        # Definitively rejects phone spoof attacks when presentation is not a proven 3D convex face.
+        if not has_3d_depth and self.detect_screen_bezel(frame, face):
+            self.reset_blink_history(clear_cooldown=False)
+            return False, 0.05, "Smartphone / display screen chassis detected flanking face (phone spoof)"
 
         # Layer 1 & 3: Landmark-guided pure cheek skin sampling
         # Extracts isolated cheek skin tissue at landmarks 50 (left) and 280 (right).
@@ -721,7 +729,8 @@ class FaceEngine:
                 return True, 0.74, "Live human verified (biological skin & micro-texture verified)"
             return False, 0.15, "MediaPipe 478 landmarks not registered"
 
-        depth_info = self.compute_dense_3d_depth(landmarks, frame.shape)
+        if depth_info is None:
+            depth_info = self.compute_dense_3d_depth(landmarks, frame.shape)
         planarity = depth_info['planarity']
         azimuth_std = depth_info['azimuth_std']
         depth_nose = depth_info['depth_nose']
