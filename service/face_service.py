@@ -204,12 +204,12 @@ class FaceDaemon:
                 log_service("Presence monitor sample skipped: %s" % exc)
 
     def ensure_camera(self):
-        """Open the camera with ultra-low latency using MSMF native backend."""
+        """Open the camera with ultra-low latency using DirectShow native backend."""
         if self.camera is None or not self.camera.isOpened():
-            # Try native Windows Media Foundation (MSMF) first (300ms vs DirectShow 1250ms)
-            self.camera = cv2.VideoCapture(self.camera_index, cv2.CAP_MSMF)
+            # Try DirectShow first for fast 400ms startup (MSMF takes >1100ms on many webcams)
+            self.camera = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
             if not self.camera.isOpened():
-                self.camera = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+                self.camera = cv2.VideoCapture(self.camera_index, cv2.CAP_MSMF)
             if self.camera.isOpened():
                 self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                 self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
@@ -253,7 +253,7 @@ class FaceDaemon:
                 start_time = time.perf_counter()
                 frames_tested = 0
                 consecutive_verified = 0
-                self.engine.reset_blink_history()
+                self.engine.reset_blink_history(clear_cooldown=True)
 
                 while time.perf_counter() - start_time < timeout_sec:
                     ret, frame = self.camera.read()
@@ -303,6 +303,11 @@ class FaceDaemon:
                                 return resp
                         else:
                             consecutive_verified = 0
+                            # If an explicit spoof attack was detected (phone chassis, subpixel raster, photo):
+                            # ABORT THE SESSION IMMEDIATELY! Do NOT allow subsequent frames to unlock!
+                            if not is_live and any(kw in liveness_msg.lower() for kw in ("spoof", "screen", "bezel", "chassis", "raster", "static photo")):
+                                log_service(f"SPOOF ATTACK DETECTED: {liveness_msg}. Immediately aborting verification session.")
+                                return {"status": "failed", "message": f"Spoof detected: {liveness_msg}"}
 
                 elapsed_total = (time.perf_counter() - start_time) * 1000
                 log_service(f"Face verification timed out after {frames_tested} frames ({elapsed_total:.1f}ms).")

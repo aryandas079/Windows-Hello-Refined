@@ -617,8 +617,8 @@ class FaceEngine:
 
         # Layer 0: Handheld smartphone / tablet chassis & screen bezel detection
         if self.detect_screen_bezel(frame, face):
-            self._spoof_cooldown = 15
-            self.reset_blink_history()
+            self._spoof_cooldown = 35
+            self.reset_blink_history(clear_cooldown=False)
             return False, 0.05, "Digital screen / phone chassis bezel detected (phone spoof)"
 
         # Obtain MediaPipe 478 landmarks & 3D head pose matrix
@@ -679,23 +679,23 @@ class FaceEngine:
         # Smartphone screens emit RGB subpixel micro-matrices with variance > 1200 (typically 2500-4500).
         if has_cheek_skin:
             if cheek_lap > 850.0:
-                self._spoof_cooldown = 15
-                self.reset_blink_history()
+                self._spoof_cooldown = 35
+                self.reset_blink_history(clear_cooldown=False)
                 return False, 0.05, f"Digital screen subpixel raster detected (skin_lap={cheek_lap:.0f} > 850)"
 
             # OLED display wide-gamut chrominance dispersion on skin:
             # Blue OLED emitters push skin Cb chrominance spread far beyond the natural melanin locus (>16.5 vs <10.0).
             if cheek_cb_std > 16.5:
-                self._spoof_cooldown = 15
-                self.reset_blink_history()
+                self._spoof_cooldown = 35
+                self.reset_blink_history(clear_cooldown=False)
                 return False, 0.05, f"Unnatural OLED display color gamut detected (skin_cb_std={cheek_cb_std:.1f} > 16.5)"
 
             # 2D FFT subpixel frequency grid check on cheek skin
             if cheek_gray is not None:
                 is_screen, fft_ratio = self.check_screen_frequency(cheek_gray)
                 if is_screen:
-                    self._spoof_cooldown = 15
-                    self.reset_blink_history()
+                    self._spoof_cooldown = 35
+                    self.reset_blink_history(clear_cooldown=False)
                     return False, 0.05, f"Display subpixel raster grid detected (fft={fft_ratio:.3f} > 0.770)"
 
             # Biological skin subsurface scattering check (melanin & hemoglobin absorption):
@@ -704,26 +704,32 @@ class FaceEngine:
                 r_mean = float(np.mean(patch_l[:, :, 2])) + 1e-5
                 br_ratio = b_mean / r_mean
                 if br_ratio > 1.25:
-                    self._spoof_cooldown = 15
-                    self.reset_blink_history()
+                    self._spoof_cooldown = 35
+                    self.reset_blink_history(clear_cooldown=False)
                     return False, 0.05, f"Unnatural display spectral emission detected (skin_BR={br_ratio:.2f} > 1.25)"
 
-        # Physical screen check 2: Subpixel raster across full face bounding box
+        # Physical screen check 2: Subpixel frequency & raster across full face bounding box
+        is_face_screen, face_fft_ratio = self.check_screen_frequency(gray_roi)
+        if is_face_screen:
+            self._spoof_cooldown = 35
+            self.reset_blink_history(clear_cooldown=False)
+            return False, 0.05, f"Display screen subpixel frequency grid detected (face_fft={face_fft_ratio:.3f} > 0.770)"
+
         lap_var = float(cv2.Laplacian(gray_roi, cv2.CV_64F).var())
         if lap_var < 9.0:
             return False, 0.05, "Extreme blur or flat paper print detected"
         if lap_var > 850.0:
-            self._spoof_cooldown = 15
-            self.reset_blink_history()
+            self._spoof_cooldown = 35
+            self.reset_blink_history(clear_cooldown=False)
             return False, 0.05, f"Digital screen high-frequency raster detected (face_lap={lap_var:.0f} > 850)"
 
         # Physical screen check 3: Specular glass mirror glare (robust percentage check)
-        # Prevents false positives from spectacles or room ceiling light glints (45-pixel bug fixed)
+        # Prevents false positives from spectacles or room ceiling light glints
         # Only triggers when over 18% of the entire face box is blown out by a reflective phone/tablet glass screen
         specular_ratio = float(np.sum(gray_roi > 248)) / float(gray_roi.size + 1e-6)
         if specular_ratio > 0.18:
-            self._spoof_cooldown = 15
-            self.reset_blink_history()
+            self._spoof_cooldown = 35
+            self.reset_blink_history(clear_cooldown=False)
             return False, 0.05, f"Flat screen glass mirror glare detected (specular={specular_ratio * 100:.1f}% > 18%)"
 
         # Layer 4: Full face YCrCb color gamut check
@@ -734,8 +740,8 @@ class FaceEngine:
         if cr_std < 0.8 or cb_std < 0.8:
             return False, 0.05, "Abnormal color compression (monochrome or cheap print)"
         if cr_std > 28.0 or cb_std > 22.0:
-            self._spoof_cooldown = 15
-            self.reset_blink_history()
+            self._spoof_cooldown = 35
+            self.reset_blink_history(clear_cooldown=False)
             return False, 0.05, "Unnatural digital screen saturation detected (phone spoof)"
 
         # Layer 5: LBP micro-texture entropy
@@ -761,8 +767,8 @@ class FaceEngine:
         # 2. Surface normal vectors must fan out across facial curves (azimuth_std >= 0.20 rad)
         # 3. Nose prominence >= 0.038 and ear depth >= 0.090 and total span >= 0.110
         if not depth_info['is_3d_convex']:
-            self._spoof_cooldown = 15
-            self.reset_blink_history()
+            self._spoof_cooldown = 35
+            self.reset_blink_history(clear_cooldown=False)
             return False, 0.05, (
                 f"Flat 2D planar presentation detected (planarity={planarity:.4f} < 0.025, "
                 f"azimuth={azimuth_std:.3f} < 0.20, nose={depth_nose:.3f})"
@@ -826,8 +832,8 @@ class FaceEngine:
         self._landmarks_history.append(key_pts_2d)
 
         if is_planar_motion:
-            self._spoof_cooldown = 15
-            self.reset_blink_history()
+            self._spoof_cooldown = 35
+            self.reset_blink_history(clear_cooldown=False)
             return False, 0.05, "Flat 2D screen presentation detected under motion (phone video/screen spoof)"
 
         # Blendshapes tracking
@@ -882,8 +888,8 @@ class FaceEngine:
 
             # Motionless presentation rejection after 5+ frames (~160ms motionless photo/screen)
             if n_frames >= 5 and dynamic_score <= 0.10:
-                self._spoof_cooldown = 15
-                self.reset_blink_history()
+                self._spoof_cooldown = 35
+                self.reset_blink_history(clear_cooldown=False)
                 return False, 0.05, "Static photo / motionless display detected (spoof)"
 
         if is_gathering:
@@ -984,7 +990,7 @@ class FaceEngine:
 
         return frame
 
-    def reset_blink_history(self):
+    def reset_blink_history(self, clear_cooldown=False):
         """Reset temporal liveness, EAR blink, iris, 3D depth, and blendshape buffers between sessions."""
         self._ear_values.clear()
         self._blink_history.clear()
@@ -994,4 +1000,5 @@ class FaceEngine:
         self._asym_history.clear()
         self._depth_history.clear()
         self._landmarks_history.clear()
-        self._spoof_cooldown = 0
+        if clear_cooldown:
+            self._spoof_cooldown = 0
