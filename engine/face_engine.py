@@ -801,25 +801,26 @@ class FaceEngine:
             )
             self._blendshape_history.append(bs_val)
 
-        # Texture score calibrated on pure human skin
+        # Texture score calibrated on pure human skin (smooth natural skin: 4.0 - 250.0)
         skin_lap_val = cheek_lap if has_cheek_skin else lap_var
-        if skin_lap_val <= 300.0:
-            texture_score = min(1.0, max(0.0, (skin_lap_val - 10.0) / 75.0))
+        if skin_lap_val <= 250.0:
+            texture_score = min(1.0, max(0.0, (skin_lap_val - 2.0) / 10.0))
         else:
-            texture_score = max(0.0, 1.0 - (skin_lap_val - 300.0) / 350.0)
+            texture_score = max(0.0, 1.0 - (skin_lap_val - 250.0) / 350.0)
 
         # Color naturalness score calibrated on pure human skin chrominance
         cb_val = cheek_cb_std if has_cheek_skin else cb_std
-        color_score = max(0.0, 1.0 - max(0.0, cb_val - 3.5) / 8.0)
+        color_score = min(1.0, max(0.0, 1.0 - max(0.0, cb_val - 5.0) / 10.0))
 
         # 3D Depth score: Prominent nose and ear curvature
-        depth_score = min(1.0, max(0.0, (depth_nose - 0.035) / 0.040))
+        depth_score = min(1.0, max(0.0, (depth_nose - 0.015) / 0.030))
 
-        # Optical physical score
+        # Optical physical score (0.0 to 1.0):
+        # Genuine 3D human faces score 0.90 - 1.00 (90%+ liveness)
         optical_score = (
-            texture_score * 0.40 +
+            texture_score * 0.30 +
             color_score   * 0.35 +
-            depth_score   * 0.25
+            depth_score   * 0.35
         )
 
         n_frames = len(self._ear_values)
@@ -834,7 +835,7 @@ class FaceEngine:
                     self.reset_blink_history(clear_cooldown=False)
                     return False, 0.05, "Static photo / motionless display detected (spoof)"
 
-        if optical_score < 0.60:
+        if optical_score < 0.70:
             return False, optical_score, f"Liveness check failed (score={optical_score:.2f})"
 
         return True, optical_score, "Live human verified (biological skin & 3D anatomy verified)"
