@@ -32,6 +32,31 @@ def delete_reg_value(hive, subkey, name):
     except Exception:
         return False
 
+def delete_reg_tree(hive, subkey):
+    try:
+        key = winreg.OpenKey(hive, subkey, 0, winreg.KEY_READ | winreg.KEY_WRITE)
+    except FileNotFoundError:
+        return True
+    except Exception:
+        return False
+
+    try:
+        while True:
+            child = winreg.EnumKey(key, 0)
+            delete_reg_tree(hive, subkey + "\\" + child)
+    except OSError:
+        pass
+    finally:
+        winreg.CloseKey(key)
+
+    try:
+        winreg.DeleteKey(hive, subkey)
+        return True
+    except FileNotFoundError:
+        return True
+    except Exception:
+        return False
+
 def clear_spotlight_cache():
     local_app_data = os.environ.get("LOCALAPPDATA")
     if not local_app_data:
@@ -73,7 +98,7 @@ def clean_lock_screen():
     # 1. ContentDeliveryManager: Suggestions, Tips, Spotlight text overlays
     cdm_key = r"Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
     tweaks_cdm = [
-        ("RotatingLockScreenOverlayEnabled", 0, "Spotlight Fun Facts & Trivia"),
+        ("RotatingLockScreenOverlayEnabled", 1, "Wallpaper title and Like/Don't like controls"),
         ("SubscribedContent-338387Enabled", 0, "Tips, Tricks, and Suggestions"),
         ("SubscribedContent-338388Enabled", 0, "Spotlight Recommendations"),
         ("SubscribedContent-338389Enabled", 0, "Edge / Lock Screen Prompts"),
@@ -85,6 +110,14 @@ def clean_lock_screen():
         ("SubscribedContent-353694Enabled", 0, "Search & News Suggestions"),
         ("SubscribedContent-353696Enabled", 0, "Spotlight Canvas Content"),
         ("SubscribedContent-353698Enabled", 0, "Lock Screen Creative Overlays"),
+        ("SubscribedContent-202914Enabled", 0, "Lock Screen News Cards"),
+        ("SubscribedContent-280810Enabled", 0, "Lock Screen Recommendations"),
+        ("SubscribedContent-280811Enabled", 0, "Lock Screen Promotional Cards"),
+        ("SubscribedContent-280815Enabled", 0, "Lock Screen Hover Suggestions"),
+        ("SubscribedContent-88000045Enabled", 0, "Lock Screen Editorial Content"),
+        ("SubscribedContent-88000161Enabled", 0, "Lock Screen News Content"),
+        ("SubscribedContent-88000163Enabled", 0, "Lock Screen Recommendation Content"),
+        ("SubscribedContent-88000165Enabled", 0, "Lock Screen Promotional Content"),
         ("SoftLandingEnabled", 0, "Welcome Experience & Tips"),
         ("SystemPaneSuggestionsEnabled", 0, "Lock Screen System Suggestions"),
         ("ContentDeliveryAllowed", 1, "Background Content Delivery"),
@@ -95,6 +128,26 @@ def clean_lock_screen():
         ok = set_reg_value(winreg.HKEY_CURRENT_USER, cdm_key, name, val)
         status = "[DONE]" if ok else "[FAIL]"
         print(f"  {status} Disable {desc}")
+
+    # Remove already-rendered news/recommendation payloads. Keep the parent
+    # Spotlight overlay enabled for the wallpaper title and Like/Don't like UI.
+    cached_content_ids = (
+        "202914", "280810", "280811", "280815",
+        "88000045", "88000161", "88000163", "88000165",
+    )
+    for content_id in cached_content_ids:
+        delete_reg_tree(
+            winreg.HKEY_CURRENT_USER,
+            cdm_key + r"\CreativeEvents\SubscribedContent-" + content_id,
+        )
+        delete_reg_tree(
+            winreg.HKEY_CURRENT_USER,
+            cdm_key + r"\Renderers\SubscribedContent-" + content_id,
+        )
+        delete_reg_tree(
+            winreg.HKEY_CURRENT_USER,
+            cdm_key + "\\Subscriptions\\" + content_id,
+        )
 
     # 2. Lock Screen Widgets & Status (Weather, Stocks, Sports, Traffic on Windows 11)
     ls_key = r"Software\Microsoft\Windows\CurrentVersion\Lock Screen"
@@ -135,9 +188,9 @@ def clean_lock_screen():
     set_reg_value(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\PersonalizationCSP", "LockScreenWidgetsEnabled", 0)
     print("  [DONE] Enforce Machine Widgets Policies (Dsh & PersonalizationCSP)")
 
-    # 6. Preserve the user's current wallpaper source and disable only the
-    # Spotlight overlay layer that adds trivia and recommendations.
-    set_reg_value(winreg.HKEY_CURRENT_USER, cdm_key, "RotatingLockScreenOverlayEnabled", 0)
+    # 6. Keep the wallpaper title and Like/Don't like controls available.
+    # News, feeds, widgets, and recommendations are disabled above.
+    set_reg_value(winreg.HKEY_CURRENT_USER, cdm_key, "RotatingLockScreenOverlayEnabled", 1)
     set_reg_value(winreg.HKEY_CURRENT_USER, cdm_key, "ContentDeliveryAllowed", 1)
 
     # 8. Clear cached Spotlight suggestions and trivia

@@ -66,7 +66,11 @@ def draw_hud(frame, face, step_info, current_in_step, total_samples, total_neede
         cv2.rectangle(frame, (x, y), (x + fw, y + fh), (0, 255, 120), 2)
 
         if engine is not None:
-            engine.draw_landmarks_478(frame, face)
+            lm, _, _ = engine.get_face_landmarks_478(frame)
+            if lm is not None and len(lm) >= 468:
+                engine.draw_dense_3d_depth_grid(frame, lm, face)
+            else:
+                engine.draw_landmarks_478(frame, face)
         else:
             landmarks = [
                 (int(face[4]), int(face[5])),

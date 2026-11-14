@@ -92,7 +92,7 @@ echo.
 :: ---------------------------------------------------------------------
 :: Optional lock-screen decluttering
 :: ---------------------------------------------------------------------
-choice /C YN /N /M "Remove lock-screen suggestions, widgets, and 'Like what you see?' overlays? [Y/N]: "
+choice /C YN /N /M "Remove lock-screen news, recommendations, and widgets while keeping wallpaper title and Like/Don't like? [Y/N]: "
 if !errorLevel! equ 1 (
     echo.
     echo       Removing lock-screen suggestions and promotional overlays...

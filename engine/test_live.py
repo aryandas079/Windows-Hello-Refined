@@ -96,8 +96,12 @@ def run_live_test(camera_index=0):
                         score_text = f"Score: {similarity * 100:.1f}% | Liveness: {live_score * 100:.1f}%"
                         cv2.rectangle(frame, (x, y), (x + fw, y + fh), status_color, 2)
 
-                # Draw 478 MediaPipe dense landmarks with anatomically color-coded regions
-                engine.draw_landmarks_478(frame, face)
+                # Draw over 12,500 projected 3D depth dots and wireframe mesh lines
+                landmarks, _, _ = engine.get_face_landmarks_478(frame)
+                if landmarks is not None and len(landmarks) >= 468:
+                    engine.draw_dense_3d_depth_grid(frame, landmarks, face)
+                else:
+                    engine.draw_landmarks_478(frame, face)
 
             proc_ms = (time.perf_counter() - start_proc) * 1000
 
