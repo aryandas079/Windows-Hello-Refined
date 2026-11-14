@@ -1112,7 +1112,7 @@ void FaceCredential::DoVerification()
 
         while (!m_bStopThread && !m_bVerified)
         {
-            Sleep(80);
+            Sleep(30);
             if (m_bStopThread) break;
 
             if (bIsCredUI && !IsCredUIDialogOpen())
@@ -1136,7 +1136,7 @@ void FaceCredential::DoVerification()
                               ((GetAsyncKeyState(VK_DOWN) & 0x8000) != 0);
 
             DWORD elapsedStandby = GetTickCount() - standbyStart;
-            bool periodicWake = (elapsedStandby >= 3000);
+            bool periodicWake = (elapsedStandby >= 180);
 
             if (mouseMoved || mouseClicked || keyPressed || periodicWake)
             {
@@ -1210,10 +1210,9 @@ HRESULT FaceCredential::GetStringValue(DWORD dwFieldID, LPWSTR* ppsz)
 
     if (dwFieldID == FPF_STATUS_TEXT)
     {
-        EnterCriticalSection(&m_cs);
-        HRESULT hr = SHStrDupW(m_statusText, ppsz);
-        LeaveCriticalSection(&m_cs);
-        return hr;
+        // Return blank string so Windows CredUI/LogonUI does not render native text
+        // blocks underneath our custom FaceOverlay!
+        return SHStrDupW(L" ", ppsz);
     }
     return E_INVALIDARG;
 }
@@ -1278,7 +1277,7 @@ HRESULT FaceCredential::CommandLinkClicked(DWORD dwFieldID)
         LeaveCriticalSection(&m_cs);
         if (m_pEvents)
         {
-            m_pEvents->SetFieldString(this, FPF_STATUS_TEXT, m_statusText);
+            m_pEvents->SetFieldString(this, FPF_STATUS_TEXT, L" ");
         }
         StartVerification();
     }

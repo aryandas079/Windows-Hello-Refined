@@ -24,7 +24,7 @@ static void LogProvider(const WCHAR* fmt, ...)
 static const CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR s_rgFieldDescriptors[] =
 {
     { FPF_LOGO,           CPFT_TILE_IMAGE,    const_cast<LPWSTR>(L"Windows Hello Face"), CPFG_CREDENTIAL_PROVIDER_LOGO },
-    { FPF_STATUS_TEXT,    CPFT_LARGE_TEXT,    const_cast<LPWSTR>(L"Windows Hello"),      GUID_NULL },
+    { FPF_STATUS_TEXT,    CPFT_LARGE_TEXT,    const_cast<LPWSTR>(L" "),                  GUID_NULL },
     { FPF_SUBMIT_BUTTON,  CPFT_SUBMIT_BUTTON, const_cast<LPWSTR>(L"Unlock"),             GUID_NULL }
 };
 

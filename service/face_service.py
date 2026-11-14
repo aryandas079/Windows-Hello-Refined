@@ -226,7 +226,7 @@ class FaceDaemon:
             self.camera = None
             log_service("Camera hardware released (LED off).")
 
-    def verify_current_face(self, timeout_sec=5.0):
+    def verify_current_face(self, timeout_sec=2.0):
         """
         Runs face recognition with ultra-fast <0.5s matching, 12,500+ dense 3D depth
         biometrics, and multi-layer anti-spoofing against phones, photos, and videos.
@@ -249,7 +249,6 @@ class FaceDaemon:
 
                 start_time = time.perf_counter()
                 frames_tested = 0
-                consecutive_verified = 0
                 self.engine.reset_blink_history(clear_cooldown=True)
 
                 while time.perf_counter() - start_time < timeout_sec:
@@ -261,13 +260,24 @@ class FaceDaemon:
                     face, status = self.engine.detect_face(frame)
 
                     if face is not None:
-                        gray_check = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                        mean_b = float(np.mean(gray_check))
-                        enh_frame = self.engine.preprocess_lighting(frame) if mean_b < 85.0 else None
-                        eval_frame = enh_frame if enh_frame is not None else frame
+                        # Ignore tiny background objects or distant faces (< 55px)
+                        if face[2] < 55 or face[3] < 55:
+                            continue
 
-                        feature = self.engine.extract_features(eval_frame, face)
-                        is_match, similarity = self.engine.match_face(feature, enrolled)
+                        # Dual-pass lighting invariant feature extraction
+                        feat_raw = self.engine.extract_features(frame, face)
+                        is_match, similarity = self.engine.match_face(feat_raw, enrolled)
+                        eval_frame = frame
+                        enh_frame = None
+
+                        if not is_match or similarity < 0.48:
+                            enh_frame = self.engine.preprocess_lighting(frame)
+                            feat_enh = self.engine.extract_features(enh_frame, face)
+                            m_enh, sim_enh = self.engine.match_face(feat_enh, enrolled)
+                            if sim_enh > similarity:
+                                is_match, similarity = m_enh, sim_enh
+                                eval_frame = enh_frame
+
                         is_live, liveness_score, liveness_msg = self.engine.check_liveness(
                             frame, face, enhanced=enh_frame
                         )
@@ -278,35 +288,34 @@ class FaceDaemon:
                             f"(score={liveness_score:.2f}; {liveness_msg}) [{elapsed_ms:.1f}ms]"
                         )
                         if is_match and is_live:
-                            consecutive_verified += 1
-                            # Ultra-fast unlock: high-confidence genuine match (sim >= 0.40) verifies on Frame 1 (<0.5s)!
-                            # Lower similarity (0.38 - 0.40) requires 2 consecutive frames for safety.
-                            target_frames = 1 if similarity >= 0.40 else MIN_LIVENESS_FRAMES
-                            if consecutive_verified >= target_frames:
-                                log_service(
-                                    f"Instant <0.5s face unlock verified for user {username} in {elapsed_ms:.1f}ms ({frames_tested} frames)!"
-                                )
-                                creds = load_credentials()
-                                resp = {
-                                    "status": "verified",
-                                    "username": username,
-                                    "confidence": round(similarity * 100, 1),
-                                    "message": f"Welcome back, {username}!",
-                                }
-                                if creds:
-                                    if creds.get("pin"):
-                                        resp["pin"] = creds["pin"]
-                                    if creds.get("password"):
-                                        resp["password"] = creds["password"]
-                                    if creds.get("domain"):
-                                        resp["domain"] = creds["domain"]
-                                return resp
+                            # Instant sub-second face unlock on Frame 1 (<0.5s)!
+                            log_service(
+                                f"Instant <0.5s face unlock verified for user {username} in {elapsed_ms:.1f}ms ({frames_tested} frames)!"
+                            )
+                            creds = load_credentials()
+                            resp = {
+                                "status": "verified",
+                                "username": username,
+                                "confidence": round(similarity * 100, 1),
+                                "message": f"Welcome back, {username}!",
+                            }
+                            if creds:
+                                if creds.get("pin"):
+                                    resp["pin"] = creds["pin"]
+                                if creds.get("password"):
+                                    resp["password"] = creds["password"]
+                                if creds.get("domain"):
+                                    resp["domain"] = creds["domain"]
+                            return resp
                         else:
-                            consecutive_verified = 0
-                            # If an explicit spoof attack was detected (phone chassis, subpixel raster, photo):
-                            # ABORT THE SESSION IMMEDIATELY! Do NOT allow subsequent frames to unlock!
-                            if not is_live and any(kw in liveness_msg.lower() for kw in ("spoof", "screen", "bezel", "chassis", "raster", "static photo", "planar", "glare", "gamut", "spectral")):
-                                log_service(f"SPOOF ATTACK DETECTED: {liveness_msg}. Immediately aborting verification session.")
+                            # Immediate abort only on definitive physical presentation spoofs
+                            # (phone chassis border, screen bezel, OLED subpixel emitter raster)
+                            msg_lower = liveness_msg.lower()
+                            is_hard_spoof = (
+                                not is_live and any(kw in msg_lower for kw in ("chassis", "bezel", "raster", "gamut", "glare", "static photo"))
+                            )
+                            if is_hard_spoof:
+                                log_service(f"HARD SPOOF DETECTED: {liveness_msg}. Immediately aborting verification session.")
                                 return {"status": "failed", "message": f"Spoof detected: {liveness_msg}"}
 
                 elapsed_total = (time.perf_counter() - start_time) * 1000
@@ -333,7 +342,7 @@ class FaceDaemon:
                 }
             elif cmd_str == "VERIFY":
                 log_service("Lock screen requested face verification...")
-                response = self.verify_current_face(timeout_sec=5.0)
+                response = self.verify_current_face(timeout_sec=2.0)
                 log_service(f"Verification outcome: status={response.get('status')}")
             elif cmd_str in ("STOP", "EXIT", "RESTART"):
                 log_service("Received STOP/RESTART command. Terminating daemon process immediately...")

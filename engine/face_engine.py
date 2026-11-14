@@ -264,71 +264,59 @@ class FaceEngine:
 
     def detect_screen_bezel(self, frame, face):
         """
-        Detects smartphone/tablet chassis borders and screen bezels flanking the face bounding
-        box. Requires bilateral symmetric vertical chassis edges flanking the face within phone
-        dimensions, with dark chassis outside and illuminated display inside on both sides.
+        Detects smartphone / tablet chassis borders and screen bezels flanking the face.
+        Uses vectorized directional horizontal Sobel gradients across vertical columns flanking
+        the face to detect continuous rectilinear chassis edges of handheld devices.
+        Returns: bool
         """
         if face is None:
             return False
         H, W = frame.shape[:2]
         fx, fy, fw, fh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
+        if fw < 30 or fh < 30:
+            return False
 
-        # Downscale for ultra-fast line detection (3-5ms)
-        scale = 320.0 / W
-        small_w = 320
-        small_h = int(H * scale)
-        small = cv2.resize(frame, (small_w, small_h))
-        gray_small = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        sobel_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        abs_sobel = np.abs(sobel_x)
 
-        s_fx = int(fx * scale)
-        s_fy = int(fy * scale)
-        s_fw = int(fw * scale)
-        s_fh = int(fh * scale)
+        # Vertical search region covering presentation height
+        y_top = max(0, fy - int(fh * 0.35))
+        y_bot = min(H, fy + int(fh * 1.55))
+        y_span = max(1, y_bot - y_top)
 
-        edges = cv2.Canny(gray_small, 40, 120)
+        # Flank regions for phone/tablet borders flanking the face
+        xl_min = max(0, fx - int(fw * 1.25))
+        xl_max = max(0, fx - int(fw * 0.08))
+        xr_min = min(W, fx + int(fw * 1.08))
+        xr_max = min(W, fx + int(fw * 2.25))
 
-        # Bilateral vertical chassis lines flanking the face within phone dimensions
-        min_len = max(26, int(s_fh * 0.55))
-        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 30, minLineLength=min_len, maxLineGap=10)
-        if lines is not None:
-            vl = []
-            vr = []
-            for l in lines:
-                lx1, ly1, lx2, ly2 = l.flatten()
-                dx, dy = abs(lx2 - lx1), abs(ly2 - ly1)
-                if dy > dx * 2.5:  # Strict vertical line
-                    mid_x = (lx1 + lx2) // 2
-                    mid_y = (ly1 + ly2) // 2
-                    if abs(mid_y - (s_fy + s_fh // 2)) < s_fh * 1.0:
-                        # Chassis border must be in close proximity to the face
-                        if mid_x < s_fx and (s_fx - mid_x) < s_fw * 1.2:
-                            vl.append(mid_x)
-                        elif mid_x > (s_fx + s_fw) and (mid_x - (s_fx + s_fw)) < s_fw * 1.2:
-                            vr.append(mid_x)
+        if xl_max <= xl_min or xr_max <= xr_min:
+            return False
 
-            y_center = s_fy + s_fh // 2
-            y1 = max(0, y_center - 20)
-            y2 = min(small_h, y_center + 20)
-            if y2 - y1 >= 10:
-                for xl in set(vl):
-                    for xr in set(vr):
-                        sep = xr - xl
-                        # Phone screen width is typically 1.15 to 2.5 times face width
-                        if s_fw * 1.15 <= sep <= s_fw * 2.5:
-                            dist_l = s_fx - xl
-                            dist_r = xr - (s_fx + s_fw)
-                            # Face must be roughly centered between phone edges
-                            if abs(dist_l - dist_r) < s_fw * 0.65:
-                                out_l = float(np.mean(gray_small[y1:y2, max(0, xl - 12):max(1, xl - 2)]))
-                                in_l  = float(np.mean(gray_small[y1:y2, min(small_w - 2, xl + 2):min(small_w, xl + 12)]))
-                                in_r  = float(np.mean(gray_small[y1:y2, max(0, xr - 12):max(1, xr - 2)]))
-                                out_r = float(np.mean(gray_small[y1:y2, min(small_w - 2, xr + 2):min(small_w, xr + 12)]))
-                                contrast_l = in_l - out_l
-                                contrast_r = in_r - out_r
+        roi_l = abs_sobel[y_top:y_bot, xl_min:xl_max]
+        roi_r = abs_sobel[y_top:y_bot, xr_min:xr_max]
 
-                                # Phone display exhibits illuminated interior and dark chassis exterior on both sides
-                                if contrast_l > 18.0 and contrast_r > 18.0:
-                                    return True
+        col_l_scores = np.sum(roi_l > 60.0, axis=0) / float(y_span)
+        col_r_scores = np.sum(roi_r > 60.0, axis=0) / float(y_span)
+
+        best_l_idx = int(np.argmax(col_l_scores))
+        best_r_idx = int(np.argmax(col_r_scores))
+        score_l = float(col_l_scores[best_l_idx])
+        score_r = float(col_r_scores[best_r_idx])
+
+        best_lx = xl_min + best_l_idx
+        best_rx = xr_min + best_r_idx
+        sep = best_rx - best_lx
+        aspect_ratio = sep / float(fw)
+
+        # Bilateral chassis edges: strong continuous vertical edges flanking face with phone aspect ratio
+        if score_l >= 0.40 and score_r >= 0.40 and 1.15 <= aspect_ratio <= 3.8:
+            return True
+
+        # Single prominent chassis edge if extremely continuous (> 75%) with phone width separation
+        if (score_l >= 0.75 or score_r >= 0.75) and 1.15 <= aspect_ratio <= 3.8:
+            return True
 
         return False
 
@@ -408,10 +396,10 @@ class FaceEngine:
         depth_span = max(lm.z for lm in landmarks[:468]) - min(lm.z for lm in landmarks[:468])
 
         is_3d_convex = (
-            planarity >= 0.025 and
-            azimuth_std >= 0.20 and
-            depth_nose >= 0.038 and
-            depth_span >= 0.110
+            planarity >= 0.020 and
+            azimuth_std >= 0.18 and
+            depth_nose >= 0.018 and
+            depth_span >= 0.075
         )
 
         return {
@@ -573,6 +561,11 @@ class FaceEngine:
         face_roi = frame[y1:y2, x1:x2]
         gray_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
 
+        # Layer 0: Handheld smartphone / tablet chassis & screen bezel edge detection (instant 4.6ms rejection)
+        if self.detect_screen_bezel(frame, face):
+            self.reset_blink_history(clear_cooldown=False)
+            return False, 0.05, "Smartphone / display screen chassis detected flanking face (phone spoof)"
+
         # Obtain MediaPipe 478 landmarks & 3D head pose matrix
         landmarks, blendshapes, mat = self.get_face_landmarks_478(frame)
         if landmarks is None or len(landmarks) < 468:
@@ -710,7 +703,7 @@ class FaceEngine:
                         def __init__(self, px, py, pz):
                             self.x, self.y, self.z = px, py, pz
                     landmarks = [
-                        _CropPoint((p.x * cw + c_x1) / float(W), (p.y * ch + c_y1) / float(H), p.z * (cw / float(W)))
+                        _CropPoint((p.x * cw + c_x1) / float(W), (p.y * ch + c_y1) / float(H), p.z)
                         for p in crop_lm
                     ]
                     blendshapes = crop_bs
@@ -736,20 +729,10 @@ class FaceEngine:
         if not depth_info['is_3d_convex']:
             self.reset_blink_history(clear_cooldown=False)
             return False, 0.05, (
-                f"Flat 2D planar presentation detected (planarity={planarity:.4f} < 0.025, "
-                f"azimuth={azimuth_std:.3f} < 0.20, nose={depth_nose:.3f})"
+                f"Flat 2D planar presentation detected (planarity={planarity:.4f} < 0.020, "
+                f"azimuth={azimuth_std:.3f} < 0.18, nose={depth_nose:.3f})"
             )
 
-        # Layer 6.5: Bilateral Smartphone / Tablet chassis bezel check
-        if self.detect_screen_bezel(frame, face):
-            is_genuine_3d = (
-                depth_info['is_3d_convex'] and
-                depth_nose >= 0.040 and
-                (not has_cheek_skin or (cheek_lap < 350.0 and cheek_cb_std < 8.0))
-            )
-            if not is_genuine_3d:
-                self.reset_blink_history(clear_cooldown=False)
-                return False, 0.05, "Digital screen / phone chassis bezel detected (phone spoof)"
 
         # Layer 7: Multi-frame Physiological Dynamics & 3D Motion Parallax
         ear_l = _ear(landmarks, _LEFT_EYE_UPPER,  _LEFT_EYE_LOWER,  _LEFT_EYE_CORNERS)

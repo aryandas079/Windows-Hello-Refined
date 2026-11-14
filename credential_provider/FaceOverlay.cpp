@@ -348,13 +348,12 @@ void FaceOverlay::RunAnimation()
         int dlgW = rc.right - rc.left;
         int dlgH = rc.bottom - rc.top;
 
-        // Keep the native title and description visible. The replacement
-        // surface covers only the PIN-logo/title band, with a tiny upward
-        // overlap to hide the separator without covering the description.
+        // Position the overlay to completely cover the horizontal separating line
+        // and the PIN logo / title band, while leaving the native app title and description visible.
         posX = rc.left;
-        posY = rc.top + (int)(dlgH * 0.245);
+        posY = rc.top + (int)(dlgH * 0.215);
         winW = dlgW;
-        winH = (int)(dlgH * 0.285);
+        winH = (int)(dlgH * 0.320);
         LogOverlay(L"CredUI dialog scenario: attached replacement overlay (%d,%d %dx%d)", posX, posY, winW, winH);
     }
     else
@@ -511,9 +510,9 @@ void FaceOverlay::RunAnimation()
                 int dlgW = rcSec.right - rcSec.left;
                 int dlgH = rcSec.bottom - rcSec.top;
                 int targetX = rcSec.left;
-                int targetY = rcSec.top + (int)(dlgH * 0.245);
+                int targetY = rcSec.top + (int)(dlgH * 0.215);
                 int targetW = dlgW;
-                int targetH = (int)(dlgH * 0.285);
+                int targetH = (int)(dlgH * 0.320);
 
                 if (targetX != posX || targetY != posY || targetW != winW || targetH != winH)
                 {
