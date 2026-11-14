@@ -212,11 +212,7 @@ class FaceDaemon:
             if not self.camera.isOpened():
                 self.camera = cv2.VideoCapture(self.camera_index, cv2.CAP_MSMF)
             if self.camera.isOpened():
-                self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-                self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
                 self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                self.camera.set(cv2.CAP_PROP_FPS, 30)
         return self.camera.isOpened() if self.camera else False
 
     def release_camera(self):
@@ -244,10 +240,6 @@ class FaceDaemon:
         username = self.profile["username"]
         enrolled = self.profile["embeddings"]
 
-        if self.engine._spoof_cooldown > 0:
-            log_service(f"Spoof cooldown active ({self.engine._spoof_cooldown} frames remaining). Rejecting verification.")
-            return {"status": "failed", "message": f"Spoof cooldown active ({self.engine._spoof_cooldown} frames remaining)"}
-
         with self.camera_lock:
             log_service("Opening camera for fast <0.5s face verification...")
             try:
@@ -258,7 +250,7 @@ class FaceDaemon:
                 start_time = time.perf_counter()
                 frames_tested = 0
                 consecutive_verified = 0
-                self.engine.reset_blink_history(clear_cooldown=False)
+                self.engine.reset_blink_history(clear_cooldown=True)
 
                 while time.perf_counter() - start_time < timeout_sec:
                     ret, frame = self.camera.read()
@@ -271,7 +263,7 @@ class FaceDaemon:
                     if face is not None:
                         gray_check = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                         mean_b = float(np.mean(gray_check))
-                        enh_frame = self.engine.preprocess_lighting(frame) if mean_b < 65.0 else None
+                        enh_frame = self.engine.preprocess_lighting(frame) if mean_b < 85.0 else None
                         eval_frame = enh_frame if enh_frame is not None else frame
 
                         feature = self.engine.extract_features(eval_frame, face)
@@ -287,9 +279,9 @@ class FaceDaemon:
                         )
                         if is_match and is_live:
                             consecutive_verified += 1
-                            # Ultra-fast unlock: high-confidence genuine match (sim >= 0.48) verifies on Frame 1 (<0.4s)!
-                            # Lower similarity (0.38 - 0.48) requires 2 consecutive frames for safety.
-                            target_frames = 1 if similarity >= 0.48 else MIN_LIVENESS_FRAMES
+                            # Ultra-fast unlock: high-confidence genuine match (sim >= 0.40) verifies on Frame 1 (<0.5s)!
+                            # Lower similarity (0.38 - 0.40) requires 2 consecutive frames for safety.
+                            target_frames = 1 if similarity >= 0.40 else MIN_LIVENESS_FRAMES
                             if consecutive_verified >= target_frames:
                                 log_service(
                                     f"Instant <0.5s face unlock verified for user {username} in {elapsed_ms:.1f}ms ({frames_tested} frames)!"
@@ -344,12 +336,18 @@ class FaceDaemon:
                 response = self.verify_current_face(timeout_sec=5.0)
                 log_service(f"Verification outcome: status={response.get('status')}")
             elif cmd_str in ("STOP", "EXIT", "RESTART"):
-                log_service("Received STOP/RESTART command. Terminating daemon process...")
-                response = {"status": "ok", "message": "Stopping daemon"}
-                res_bytes = (json.dumps(response) + "\n").encode('utf-8')
-                win32file.WriteFile(h_pipe, res_bytes)
-                threading.Thread(target=lambda: (time.sleep(0.3), os._exit(0))).start()
-                return
+                log_service("Received STOP/RESTART command. Terminating daemon process immediately...")
+                try:
+                    response = {"status": "ok", "message": "Stopping daemon"}
+                    res_bytes = (json.dumps(response) + "\n").encode('utf-8')
+                    win32file.WriteFile(h_pipe, res_bytes)
+                except Exception:
+                    pass
+                try:
+                    self.release_camera()
+                except Exception:
+                    pass
+                os._exit(0)
             else:
                 response = {"status": "unknown_command"}
 

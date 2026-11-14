@@ -259,14 +259,14 @@ class FaceEngine:
         lf_energy = float(np.mean(magnitude[~high_freq_mask]))
         ratio = hf_energy / (lf_energy + 1e-6)
 
-        is_screen = (ratio > 0.690)
+        is_screen = (ratio > 0.760)
         return is_screen, ratio
 
     def detect_screen_bezel(self, frame, face):
         """
-        Detects smartphone/tablet chassis borders, screen bezels, and rectangular display frames
-        surrounding the face bounding box using full-frame downscaled Hough lines, bilateral contrast
-        steps, and rectangular contour analysis.
+        Detects smartphone/tablet chassis borders and screen bezels flanking the face bounding
+        box. Requires bilateral symmetric vertical chassis edges flanking the face within phone
+        dimensions, with dark chassis outside and illuminated display inside on both sides.
         """
         if face is None:
             return False
@@ -287,128 +287,48 @@ class FaceEngine:
 
         edges = cv2.Canny(gray_small, 40, 120)
 
-        # 1. Check for rectangular contours enclosing the face with smartphone/tablet aspect ratio
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if (s_fw * s_fh * 0.7) < area < (s_fw * s_fh * 8.0):
-                peri = cv2.arcLength(cnt, True)
-                approx = cv2.approxPolyDP(cnt, 0.03 * peri, True)
-                if len(approx) == 4:
-                    rx, ry, rw, rh = cv2.boundingRect(approx)
-                    fc_x = s_fx + s_fw // 2
-                    fc_y = s_fy + s_fh // 2
-                    if rx <= fc_x <= rx + rw and ry <= fc_y <= ry + rh:
-                        aspect = max(rw, rh) / max(1, min(rw, rh))
-                        if 1.2 <= aspect <= 2.5:
-                            return True
-
-        # 2. Check for straight vertical bezel lines flanking the face
-        min_len = max(22, int(s_fh * 0.45))
-        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 26, minLineLength=min_len, maxLineGap=12)
+        # Bilateral vertical chassis lines flanking the face within phone dimensions
+        min_len = max(26, int(s_fh * 0.55))
+        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 30, minLineLength=min_len, maxLineGap=10)
         if lines is not None:
             vl = []
             vr = []
-            hl = []
             for l in lines:
                 lx1, ly1, lx2, ly2 = l.flatten()
                 dx, dy = abs(lx2 - lx1), abs(ly2 - ly1)
-                if dy > dx * 2.2:  # Strict vertical line
+                if dy > dx * 2.5:  # Strict vertical line
                     mid_x = (lx1 + lx2) // 2
                     mid_y = (ly1 + ly2) // 2
-                    if abs(mid_y - (s_fy + s_fh // 2)) < s_fh * 1.5:
-                        if mid_x < s_fx:
+                    if abs(mid_y - (s_fy + s_fh // 2)) < s_fh * 1.0:
+                        # Chassis border must be in close proximity to the face
+                        if mid_x < s_fx and (s_fx - mid_x) < s_fw * 1.2:
                             vl.append(mid_x)
-                        elif mid_x > (s_fx + s_fw):
+                        elif mid_x > (s_fx + s_fw) and (mid_x - (s_fx + s_fw)) < s_fw * 1.2:
                             vr.append(mid_x)
-                elif dx > dy * 2.2:  # Horizontal line (top/bottom phone border)
-                    mid_y = (ly1 + ly2) // 2
-                    mid_x = (lx1 + lx2) // 2
-                    if abs(mid_x - (s_fx + s_fw // 2)) < s_fw * 1.5:
-                        hl.append(mid_y)
 
-            # Check bilateral vertical line pairs flanking the face
-            for xl in set(vl):
-                for xr in set(vr):
-                    sep = xr - xl
-                    if s_fw * 1.15 <= sep <= s_fw * 5.5:
-                        y_center = s_fy + s_fh // 2
-                        y1 = max(0, y_center - 20)
-                        y2 = min(small_h, y_center + 20)
-                        if y2 - y1 >= 10:
-                            # Sample left bezel: outside chassis vs inside display
-                            out_l = float(np.mean(gray_small[y1:y2, max(0, xl - 12):max(1, xl - 2)]))
-                            in_l  = float(np.mean(gray_small[y1:y2, min(small_w - 2, xl + 2):min(small_w, xl + 12)]))
-                            # Sample right bezel: inside display vs outside chassis
-                            in_r  = float(np.mean(gray_small[y1:y2, max(0, xr - 12):max(1, xr - 2)]))
-                            out_r = float(np.mean(gray_small[y1:y2, min(small_w - 2, xr + 2):min(small_w, xr + 12)]))
-                            contrast_l = in_l - out_l
-                            contrast_r = in_r - out_r
-
-                            # A phone screen display exhibits bright interior and dark bezel exterior on both sides
-                            if (contrast_l > 12.0 and contrast_r > 12.0) or (contrast_l + contrast_r > 30.0):
-                                return True
-                            # Strong geometric chassis line pair with sharp borders
-                            if abs(contrast_l) > 22.0 and abs(contrast_r) > 22.0:
-                                return True
-
-            # Check single prominent vertical bezel flanking the face (e.g. one side hand-occluded)
-            for xl in set(vl):
-                if (s_fx - xl) <= s_fw * 2.0:
-                    y1 = max(0, s_fy)
-                    y2 = min(small_h, s_fy + s_fh)
-                    if y2 - y1 >= 10:
-                        out_l = float(np.mean(gray_small[y1:y2, max(0, xl - 12):max(1, xl - 2)]))
-                        in_l  = float(np.mean(gray_small[y1:y2, min(small_w - 2, xl + 2):min(small_w, xl + 12)]))
-                        if abs(in_l - out_l) > 28.0:
-                            return True
-            for xr in set(vr):
-                if (xr - (s_fx + s_fw)) <= s_fw * 2.0:
-                    y1 = max(0, s_fy)
-                    y2 = min(small_h, s_fy + s_fh)
-                    if y2 - y1 >= 10:
-                        in_r  = float(np.mean(gray_small[y1:y2, max(0, xr - 12):max(1, xr - 2)]))
-                        out_r = float(np.mean(gray_small[y1:y2, min(small_w - 2, xr + 2):min(small_w, xr + 12)]))
-                        if abs(in_r - out_r) > 28.0:
-                            return True
-
-            # Check horizontal phone bezel above hair or below chin
-            for yh in set(hl):
-                if yh < s_fy or yh > (s_fy + s_fh):
-                    x1 = max(0, s_fx)
-                    x2 = min(small_w, s_fx + s_fw)
-                    if x2 - x1 >= 10:
-                        above = float(np.mean(gray_small[max(0, yh - 10):max(1, yh - 2), x1:x2]))
-                        below = float(np.mean(gray_small[min(small_h - 2, yh + 2):min(small_h, yh + 10), x1:x2]))
-                        if abs(above - below) > 30.0:
-                            return True
-
-        # 3. Also check close-up face crop for phone held very close to the lens
-        pad_w = int(fw * 0.45)
-        pad_h = int(fh * 0.45)
-        x1_crop, y1_crop = max(0, fx - pad_w), max(0, fy - pad_h)
-        x2_crop, y2_crop = min(W, fx + fw + pad_w), min(H, fy + fh + pad_h)
-        surround = frame[y1_crop:y2_crop, x1_crop:x2_crop]
-        if surround.size > 0 and surround.shape[0] >= 40 and surround.shape[1] >= 40:
-            gray_crop = cv2.cvtColor(surround, cv2.COLOR_BGR2GRAY)
-            edges_crop = cv2.Canny(gray_crop, 60, 150)
-            lines_crop = cv2.HoughLinesP(edges_crop, 1, np.pi / 180, 40, minLineLength=int(fh * 0.55), maxLineGap=10)
-            if lines_crop is not None:
-                vl_crop, vr_crop = [], []
-                for l in lines_crop:
-                    lx1, ly1, lx2, ly2 = l.flatten()
-                    dx, dy = abs(lx2 - lx1), abs(ly2 - ly1)
-                    if dy > dx * 2.8:
-                        mid_x = (lx1 + lx2) // 2
-                        if mid_x < (fx - x1_crop):
-                            vl_crop.append(mid_x)
-                        elif mid_x > (fx - x1_crop + fw):
-                            vr_crop.append(mid_x)
-                for xl in vl_crop:
-                    for xr in vr_crop:
+            y_center = s_fy + s_fh // 2
+            y1 = max(0, y_center - 20)
+            y2 = min(small_h, y_center + 20)
+            if y2 - y1 >= 10:
+                for xl in set(vl):
+                    for xr in set(vr):
                         sep = xr - xl
-                        if fw < sep < (fw * 1.85):
-                            return True
+                        # Phone screen width is typically 1.15 to 2.5 times face width
+                        if s_fw * 1.15 <= sep <= s_fw * 2.5:
+                            dist_l = s_fx - xl
+                            dist_r = xr - (s_fx + s_fw)
+                            # Face must be roughly centered between phone edges
+                            if abs(dist_l - dist_r) < s_fw * 0.65:
+                                out_l = float(np.mean(gray_small[y1:y2, max(0, xl - 12):max(1, xl - 2)]))
+                                in_l  = float(np.mean(gray_small[y1:y2, min(small_w - 2, xl + 2):min(small_w, xl + 12)]))
+                                in_r  = float(np.mean(gray_small[y1:y2, max(0, xr - 12):max(1, xr - 2)]))
+                                out_r = float(np.mean(gray_small[y1:y2, min(small_w - 2, xr + 2):min(small_w, xr + 12)]))
+                                contrast_l = in_l - out_l
+                                contrast_r = in_r - out_r
+
+                                # Phone display exhibits illuminated interior and dark chassis exterior on both sides
+                                if contrast_l > 18.0 and contrast_r > 18.0:
+                                    return True
 
         return False
 
@@ -569,13 +489,19 @@ class FaceEngine:
             _, faces = self.detector.detect(enh)
 
         if faces is None or len(faces) == 0:
-            # Low-light recovery pass for dim/night environments (mean brightness < 65)
+            # Low-light recovery pass for dim/night environments (mean brightness < 85)
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            if np.mean(gray) < 65.0:
-                orig_th = self.detector.getScoreThreshold()
-                self.detector.setScoreThreshold(0.22)
-                enh = self.preprocess_lighting(frame)
-                _, faces = self.detector.detect(enh)
+            orig_th = self.detector.getScoreThreshold()
+            try:
+                if np.mean(gray) < 85.0:
+                    self.detector.setScoreThreshold(0.28)
+                    enh = self.preprocess_lighting(frame)
+                    _, faces = self.detector.detect(enh)
+                if faces is None or len(faces) == 0:
+                    self.detector.setScoreThreshold(0.22)
+                    enh = self.preprocess_lighting(frame)
+                    _, faces = self.detector.detect(enh)
+            finally:
                 self.detector.setScoreThreshold(orig_th)
 
         if faces is None or len(faces) == 0:
@@ -647,17 +573,6 @@ class FaceEngine:
         face_roi = frame[y1:y2, x1:x2]
         gray_roi = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
 
-        # Check spoof cooldown penalty from previous spoof frames
-        if self._spoof_cooldown > 0:
-            self._spoof_cooldown -= 1
-            return False, 0.05, "Digital screen / phone spoof cooldown active (spoof detected)"
-
-        # Layer 0: Handheld smartphone / tablet chassis & screen bezel detection
-        if self.detect_screen_bezel(frame, face):
-            self._spoof_cooldown = 50
-            self.reset_blink_history(clear_cooldown=False)
-            return False, 0.05, "Digital screen / phone chassis bezel detected (phone spoof)"
-
         # Obtain MediaPipe 478 landmarks & 3D head pose matrix
         landmarks, blendshapes, mat = self.get_face_landmarks_478(frame)
         if landmarks is None or len(landmarks) < 468:
@@ -716,67 +631,59 @@ class FaceEngine:
         # Smartphone screens emit RGB subpixel micro-matrices with variance > 1200 (typically 2500-4500).
         if has_cheek_skin:
             if cheek_lap > 650.0:
-                self._spoof_cooldown = 50
                 self.reset_blink_history(clear_cooldown=False)
                 return False, 0.05, f"Digital screen subpixel raster detected (skin_lap={cheek_lap:.0f} > 650)"
 
             # OLED display wide-gamut chrominance dispersion on skin:
             # Blue OLED emitters push skin Cb chrominance spread far beyond the natural melanin locus (>14.0 vs <10.0).
             if cheek_cb_std > 14.0:
-                self._spoof_cooldown = 50
                 self.reset_blink_history(clear_cooldown=False)
                 return False, 0.05, f"Unnatural OLED display color gamut detected (skin_cb_std={cheek_cb_std:.1f} > 14.0)"
 
             # 2D FFT subpixel frequency grid check on cheek skin
             if cheek_gray is not None:
                 is_screen, fft_ratio = self.check_screen_frequency(cheek_gray)
-                if is_screen or fft_ratio > 0.690:
-                    self._spoof_cooldown = 50
+                if fft_ratio > 0.760:
                     self.reset_blink_history(clear_cooldown=False)
-                    return False, 0.05, f"Display subpixel raster grid detected (fft={fft_ratio:.3f} > 0.690)"
+                    return False, 0.05, f"Display subpixel raster grid detected (fft={fft_ratio:.3f} > 0.760)"
 
             # Biological skin subsurface scattering check (melanin & hemoglobin absorption):
             if patch_l.size > 0:
                 b_mean = float(np.mean(patch_l[:, :, 0]))
                 r_mean = float(np.mean(patch_l[:, :, 2])) + 1e-5
                 br_ratio = b_mean / r_mean
-                if br_ratio > 0.860 and b_mean > 40.0:
-                    self._spoof_cooldown = 50
+                if br_ratio > 0.880 and b_mean > 45.0 and cheek_lap > 450.0:
                     self.reset_blink_history(clear_cooldown=False)
-                    return False, 0.05, f"Unnatural display spectral emission detected (skin_BR={br_ratio:.2f} > 0.86)"
+                    return False, 0.05, f"Unnatural display spectral emission detected (skin_BR={br_ratio:.2f} > 0.88)"
 
         # Physical screen check 2: Subpixel frequency & raster across full face bounding box
         is_face_screen, face_fft_ratio = self.check_screen_frequency(gray_roi)
-        if is_face_screen or face_fft_ratio > 0.690:
-            self._spoof_cooldown = 50
-            self.reset_blink_history(clear_cooldown=False)
-            return False, 0.05, f"Display screen subpixel frequency grid detected (face_fft={face_fft_ratio:.3f} > 0.690)"
-
         lap_var = float(cv2.Laplacian(gray_roi, cv2.CV_64F).var())
-        if lap_var < 10.0:
-            return False, 0.05, "Extreme blur or flat paper print detected"
-        if lap_var > 650.0:
-            self._spoof_cooldown = 50
-            self.reset_blink_history(clear_cooldown=False)
-            return False, 0.05, f"Digital screen high-frequency raster detected (face_lap={lap_var:.0f} > 650)"
-
-        # Physical screen check 3: Specular glass mirror glare
-        # Phone / tablet glass screens produce flat specular reflections
-        specular_ratio = float(np.sum(gray_roi > 248)) / float(gray_roi.size + 1e-6)
-        if specular_ratio > 0.10:
-            self._spoof_cooldown = 50
-            self.reset_blink_history(clear_cooldown=False)
-            return False, 0.05, f"Flat screen glass mirror glare detected (specular={specular_ratio * 100:.1f}% > 10%)"
-
-        # Layer 4: Full face YCrCb color gamut check
         ycrcb = cv2.cvtColor(face_roi, cv2.COLOR_BGR2YCrCb)
         _, cr, cb = cv2.split(ycrcb)
         cr_std = float(np.std(cr))
         cb_std = float(np.std(cb))
+
+        if (is_face_screen or face_fft_ratio > 0.760) and (lap_var > 450.0 or cb_std > 12.0):
+            self.reset_blink_history(clear_cooldown=False)
+            return False, 0.05, f"Display screen subpixel frequency grid detected (face_fft={face_fft_ratio:.3f} > 0.760)"
+
+        if lap_var < 10.0:
+            return False, 0.05, "Extreme blur or flat paper print detected"
+        if lap_var > 650.0:
+            self.reset_blink_history(clear_cooldown=False)
+            return False, 0.05, f"Digital screen high-frequency raster detected (face_lap={lap_var:.0f} > 650)"
+
+        # Physical screen check 3: Specular glass mirror glare
+        specular_ratio = float(np.sum(gray_roi > 248)) / float(gray_roi.size + 1e-6)
+        if specular_ratio > 0.12 and (lap_var > 400.0 or cb_std > 10.0):
+            self.reset_blink_history(clear_cooldown=False)
+            return False, 0.05, f"Flat screen glass mirror glare detected (specular={specular_ratio * 100:.1f}% > 12%)"
+
+        # Layer 4: Full face YCrCb color gamut check
         if cr_std < 0.8 or cb_std < 0.8:
             return False, 0.05, "Abnormal color compression (monochrome or cheap print)"
         if cr_std > 25.0 or cb_std > 18.0:
-            self._spoof_cooldown = 50
             self.reset_blink_history(clear_cooldown=False)
             return False, 0.05, "Unnatural digital screen saturation detected (phone spoof)"
 
@@ -788,6 +695,34 @@ class FaceEngine:
 
         # Layer 6: 12,500+ Dense 3D Depth Points & Manifold Curvature Verification
         if landmarks is None or len(landmarks) < 468:
+            # Fallback: attempt landmark detection on padded face crop
+            pad_w = int(w * 0.30)
+            pad_h = int(h * 0.30)
+            c_x1, c_y1 = max(0, x - pad_w), max(0, y - pad_h)
+            c_x2, c_y2 = min(W, x + w + pad_w), min(H, y + h + pad_h)
+            crop_roi = frame[c_y1:c_y2, c_x1:c_x2]
+            if crop_roi.size > 0:
+                crop_lm, crop_bs, crop_mat = self.get_face_landmarks_478(crop_roi)
+                if crop_lm is not None and len(crop_lm) >= 468:
+                    cw, ch = float(c_x2 - c_x1), float(c_y2 - c_y1)
+                    class _CropPoint:
+                        __slots__ = ('x', 'y', 'z')
+                        def __init__(self, px, py, pz):
+                            self.x, self.y, self.z = px, py, pz
+                    landmarks = [
+                        _CropPoint((p.x * cw + c_x1) / float(W), (p.y * ch + c_y1) / float(H), p.z * (cw / float(W)))
+                        for p in crop_lm
+                    ]
+                    blendshapes = crop_bs
+                    mat = crop_mat
+
+        if landmarks is None or len(landmarks) < 468:
+            # Multi-layer biological skin & micro-texture verification fallback
+            skin_lap_val = cheek_lap if has_cheek_skin else lap_var
+            skin_cb_val = cheek_cb_std if has_cheek_skin else cb_std
+            is_bio_skin = (12.0 <= skin_lap_val <= 350.0) and (1.0 <= skin_cb_val <= 8.5) and (face_fft_ratio < 0.740) and (specular_ratio < 0.10)
+            if is_bio_skin and not self.detect_screen_bezel(frame, face):
+                return True, 0.74, "Live human verified (biological skin & micro-texture verified)"
             return False, 0.15, "MediaPipe 478 landmarks not registered"
 
         depth_info = self.compute_dense_3d_depth(landmarks, frame.shape)
@@ -799,12 +734,22 @@ class FaceEngine:
         self._depth_history.append(depth_nose)
 
         if not depth_info['is_3d_convex']:
-            self._spoof_cooldown = 50
             self.reset_blink_history(clear_cooldown=False)
             return False, 0.05, (
                 f"Flat 2D planar presentation detected (planarity={planarity:.4f} < 0.025, "
                 f"azimuth={azimuth_std:.3f} < 0.20, nose={depth_nose:.3f})"
             )
+
+        # Layer 6.5: Bilateral Smartphone / Tablet chassis bezel check
+        if self.detect_screen_bezel(frame, face):
+            is_genuine_3d = (
+                depth_info['is_3d_convex'] and
+                depth_nose >= 0.040 and
+                (not has_cheek_skin or (cheek_lap < 350.0 and cheek_cb_std < 8.0))
+            )
+            if not is_genuine_3d:
+                self.reset_blink_history(clear_cooldown=False)
+                return False, 0.05, "Digital screen / phone chassis bezel detected (phone spoof)"
 
         # Layer 7: Multi-frame Physiological Dynamics & 3D Motion Parallax
         ear_l = _ear(landmarks, _LEFT_EYE_UPPER,  _LEFT_EYE_LOWER,  _LEFT_EYE_CORNERS)
@@ -849,19 +794,17 @@ class FaceEngine:
         if len(self._landmarks_history) >= 1:
             prev_pts = self._landmarks_history[-1]
             shift = float(np.mean(np.linalg.norm(key_pts_2d - prev_pts, axis=1)))
-            # If the face or device moved slightly in space (e.g. hand tremor)
-            if shift >= 1.0:
+            # Large device motion (shift >= 8px) with flat 2D manifold
+            if shift >= 8.0 and not depth_info['is_3d_convex']:
                 H_mat, _ = cv2.findHomography(prev_pts, key_pts_2d, cv2.RANSAC, 2.5)
                 if H_mat is not None:
                     pred_pts = cv2.perspectiveTransform(prev_pts.reshape(-1, 1, 2), H_mat).reshape(-1, 2)
                     res_err = float(np.mean(np.linalg.norm(pred_pts - key_pts_2d, axis=1)))
-                    # Rigid 2D screen/photo moving in hand has near-zero homography residual (< 0.28 px)
-                    if res_err < 0.28:
+                    if res_err < 0.35:
                         is_planar_motion = True
         self._landmarks_history.append(key_pts_2d)
 
         if is_planar_motion:
-            self._spoof_cooldown = 50
             self.reset_blink_history(clear_cooldown=False)
             return False, 0.05, "Flat 2D screen presentation detected under motion (phone video/screen spoof)"
 
@@ -905,7 +848,6 @@ class FaceEngine:
             if len(self._landmarks_history) >= 6:
                 tot_motion = float(np.mean(np.linalg.norm(self._landmarks_history[-1] - self._landmarks_history[-6], axis=1)))
                 if tot_motion < 0.6 and ear_span < 0.015 and iris_span < 0.015:
-                    self._spoof_cooldown = 50
                     self.reset_blink_history(clear_cooldown=False)
                     return False, 0.05, "Static photo / motionless display detected (spoof)"
 
