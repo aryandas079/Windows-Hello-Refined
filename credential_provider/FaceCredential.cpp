@@ -1136,7 +1136,7 @@ void FaceCredential::DoVerification()
                               ((GetAsyncKeyState(VK_DOWN) & 0x8000) != 0);
 
             DWORD elapsedStandby = GetTickCount() - standbyStart;
-            bool periodicWake = (elapsedStandby >= 180);
+            bool periodicWake = (elapsedStandby >= 5000); // Check for user every 5.0s and pulse camera LED
 
             if (mouseMoved || mouseClicked || keyPressed || periodicWake)
             {

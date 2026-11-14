@@ -31,6 +31,172 @@ static void LogOverlay(const WCHAR* fmt, ...)
     }
 }
 
+struct SoundThreadParams
+{
+    WCHAR soundPath[MAX_PATH];
+};
+
+static UINT FindSystemSpeakerDevice()
+{
+    UINT numDevs = waveOutGetNumDevs();
+    if (numDevs == 0) return WAVE_MAPPER;
+
+    // Pass 1: Look explicitly for "speaker" in device friendly name
+    for (UINT i = 0; i < numDevs; i++)
+    {
+        WAVEOUTCAPSW caps = {0};
+        if (waveOutGetDevCapsW(i, &caps, sizeof(caps)) == MMSYSERR_NOERROR)
+        {
+            WCHAR nameLower[64] = {0};
+            StringCchCopyW(nameLower, ARRAYSIZE(nameLower), caps.szPname);
+            _wcslwr_s(nameLower, ARRAYSIZE(nameLower));
+            if (wcsstr(nameLower, L"speaker") != NULL)
+            {
+                LogOverlay(L"FindSystemSpeakerDevice: matched internal speaker device ID %u ('%s')", i, caps.szPname);
+                return i;
+            }
+        }
+    }
+
+    // Pass 2: Filter out headphones, headsets, and bluetooth devices
+    for (UINT i = 0; i < numDevs; i++)
+    {
+        WAVEOUTCAPSW caps = {0};
+        if (waveOutGetDevCapsW(i, &caps, sizeof(caps)) == MMSYSERR_NOERROR)
+        {
+            WCHAR nameLower[64] = {0};
+            StringCchCopyW(nameLower, ARRAYSIZE(nameLower), caps.szPname);
+            _wcslwr_s(nameLower, ARRAYSIZE(nameLower));
+            if (wcsstr(nameLower, L"headphone") == NULL &&
+                wcsstr(nameLower, L"headset") == NULL &&
+                wcsstr(nameLower, L"ear") == NULL &&
+                wcsstr(nameLower, L"buds") == NULL &&
+                wcsstr(nameLower, L"bluetooth") == NULL)
+            {
+                LogOverlay(L"FindSystemSpeakerDevice: fallback to non-headphone device ID %u ('%s')", i, caps.szPname);
+                return i;
+            }
+        }
+    }
+
+    LogOverlay(L"FindSystemSpeakerDevice: defaulting to device ID 0");
+    return 0;
+}
+
+static DWORD WINAPI PlaySpeakerSoundThread(LPVOID lpParam)
+{
+    SoundThreadParams* pParams = reinterpret_cast<SoundThreadParams*>(lpParam);
+    if (!pParams) return 0;
+
+    WCHAR targetSound[MAX_PATH] = {0};
+    StringCchCopyW(targetSound, ARRAYSIZE(targetSound), pParams->soundPath);
+    delete pParams;
+
+    HANDLE hFile = CreateFileW(targetSound, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE)
+    {
+        LogOverlay(L"PlaySpeakerSoundThread: failed to open sound file %s", targetSound);
+        return 0;
+    }
+
+    DWORD dwFileSize = GetFileSize(hFile, NULL);
+    if (dwFileSize < 44 || dwFileSize > 10 * 1024 * 1024)
+    {
+        CloseHandle(hFile);
+        return 0;
+    }
+
+    BYTE* pBuffer = (BYTE*)malloc(dwFileSize);
+    if (!pBuffer)
+    {
+        CloseHandle(hFile);
+        return 0;
+    }
+
+    DWORD dwRead = 0;
+    ReadFile(hFile, pBuffer, dwFileSize, &dwRead, NULL);
+    CloseHandle(hFile);
+
+    if (dwRead < 44 || memcmp(pBuffer, "RIFF", 4) != 0 || memcmp(pBuffer + 8, "WAVE", 4) != 0)
+    {
+        free(pBuffer);
+        LogOverlay(L"PlaySpeakerSoundThread: invalid WAV header");
+        return 0;
+    }
+
+    WAVEFORMATEX* pwfx = NULL;
+    BYTE* pAudioData = NULL;
+    DWORD dwAudioBytes = 0;
+
+    DWORD offset = 12;
+    while (offset + 8 <= dwRead)
+    {
+        char chunkId[5] = {0};
+        memcpy(chunkId, pBuffer + offset, 4);
+        DWORD chunkSize = *reinterpret_cast<DWORD*>(pBuffer + offset + 4);
+        offset += 8;
+
+        if (offset + chunkSize > dwRead) break;
+
+        if (memcmp(chunkId, "fmt ", 4) == 0 && chunkSize >= sizeof(PCMWAVEFORMAT))
+        {
+            pwfx = reinterpret_cast<WAVEFORMATEX*>(pBuffer + offset);
+        }
+        else if (memcmp(chunkId, "data", 4) == 0)
+        {
+            pAudioData = pBuffer + offset;
+            dwAudioBytes = chunkSize;
+            break;
+        }
+
+        offset += (chunkSize + 1) & ~1;
+    }
+
+    if (!pwfx || !pAudioData || dwAudioBytes == 0)
+    {
+        free(pBuffer);
+        LogOverlay(L"PlaySpeakerSoundThread: failed to find fmt/data chunks");
+        return 0;
+    }
+
+    UINT speakerDevId = FindSystemSpeakerDevice();
+    HWAVEOUT hWaveOut = NULL;
+    MMRESULT mr = waveOutOpen(&hWaveOut, speakerDevId, pwfx, 0, 0, CALLBACK_NULL);
+    if (mr != MMSYSERR_NOERROR)
+    {
+        LogOverlay(L"PlaySpeakerSoundThread: waveOutOpen failed on device %u (mr=%u), trying default mapper", speakerDevId, mr);
+        mr = waveOutOpen(&hWaveOut, WAVE_MAPPER, pwfx, 0, 0, CALLBACK_NULL);
+    }
+
+    if (mr == MMSYSERR_NOERROR && hWaveOut)
+    {
+        WAVEHDR hdr = {0};
+        hdr.lpData = reinterpret_cast<LPSTR>(pAudioData);
+        hdr.dwBufferLength = dwAudioBytes;
+
+        waveOutPrepareHeader(hWaveOut, &hdr, sizeof(WAVEHDR));
+        waveOutWrite(hWaveOut, &hdr, sizeof(WAVEHDR));
+
+        DWORD waitStart = GetTickCount();
+        while (!(hdr.dwFlags & WHDR_DONE) && (GetTickCount() - waitStart < 3000))
+        {
+            Sleep(25);
+        }
+
+        waveOutUnprepareHeader(hWaveOut, &hdr, sizeof(WAVEHDR));
+        waveOutClose(hWaveOut);
+        LogOverlay(L"PlaySpeakerSoundThread: speaker playback completed successfully");
+    }
+    else
+    {
+        LogOverlay(L"PlaySpeakerSoundThread: waveOutOpen failed, fallback to MessageBeep");
+        MessageBeep(MB_OK);
+    }
+
+    free(pBuffer);
+    return 0;
+}
+
 static void PlayFeedbackSound()
 {
     WCHAR assetPath[MAX_PATH] = {0};
@@ -57,11 +223,17 @@ static void PlayFeedbackSound()
 
     if (targetSound)
     {
-        LogOverlay(L"PlayFeedbackSound: playing %s asynchronously", targetSound);
-        BOOL bPlayed = PlaySoundW(targetSound, NULL, SND_FILENAME | SND_ASYNC | SND_NODEFAULT);
-        if (!bPlayed)
+        LogOverlay(L"PlayFeedbackSound: playing %s exclusively through system speakers", targetSound);
+        SoundThreadParams* pParams = new SoundThreadParams();
+        StringCchCopyW(pParams->soundPath, ARRAYSIZE(pParams->soundPath), targetSound);
+        HANDLE hThread = CreateThread(NULL, 0, PlaySpeakerSoundThread, pParams, 0, NULL);
+        if (hThread)
         {
-            LogOverlay(L"PlayFeedbackSound: PlaySoundW returned FALSE (err=%lu), trying MessageBeep", GetLastError());
+            CloseHandle(hThread);
+        }
+        else
+        {
+            delete pParams;
             MessageBeep(MB_OK);
         }
     }

@@ -259,10 +259,18 @@ class FaceDaemon:
                     frames_tested += 1
                     face, status = self.engine.detect_face(frame)
 
-                    if face is not None:
-                        # Ignore tiny background objects or distant faces (< 55px)
-                        if face[2] < 55 or face[3] < 55:
-                            continue
+                    if face is None:
+                        # If no face is in front of the lens after 2 frames (~350ms),
+                        # release camera hardware immediately so LED blinks briefly and turns OFF.
+                        if frames_tested >= 2:
+                            break
+                        continue
+
+                    # Ignore tiny background objects or distant faces (< 55px)
+                    if face[2] < 55 or face[3] < 55:
+                        if frames_tested >= 2:
+                            break
+                        continue
 
                         # Dual-pass lighting invariant feature extraction
                         feat_raw = self.engine.extract_features(frame, face)
