@@ -90,21 +90,12 @@ if %errorLevel% neq 0 (
 echo.
 
 :: ---------------------------------------------------------------------
-:: Optional lock-screen decluttering
+:: Lock-screen decluttering (automatic clean, no prompt)
 :: ---------------------------------------------------------------------
-choice /C YN /N /M "Remove lock-screen news, recommendations, and widgets while keeping wallpaper title and Like/Don't like? [Y/N]: "
-if !errorLevel! equ 1 (
-    echo.
-    echo       Removing lock-screen suggestions and promotional overlays...
-    "%PYTHON%" "%PROJ_DIR%\clean_lockscreen.py" --clean
-    if !errorLevel! neq 0 (
-        echo [WARNING] Lock-screen cleanup did not complete successfully.
-    )
-    echo.
-) else (
-    echo       Keeping default Windows lock-screen suggestions.
-    echo.
-)
+echo [*] Removing lock-screen news, recommendations, and widgets...
+"%PYTHON%" "%PROJ_DIR%\clean_lockscreen.py" --clean >nul 2>&1
+echo       [SUCCESS] Clean minimal lock screen configured.
+echo.
 
 echo [*] Configure auto-lock when you are not detected...
 "%PYTHON%" "%PRESENCE_CONFIG_PY%" --interactive

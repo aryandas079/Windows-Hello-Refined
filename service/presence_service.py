@@ -42,6 +42,19 @@ def acquire_single_instance():
     return mutex
 
 
+def is_user_active(idle_threshold_sec=5.0):
+    """Return True if user has interacted with keyboard or mouse recently."""
+    class LASTINPUTINFO(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+    lii = LASTINPUTINFO()
+    lii.cbSize = ctypes.sizeof(LASTINPUTINFO)
+    if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
+        tick = ctypes.windll.kernel32.GetTickCount()
+        idle_sec = (tick - lii.dwTime) / 1000.0
+        return idle_sec < idle_threshold_sec
+    return False
+
+
 def is_locked():
     user32 = ctypes.windll.user32
     desktop = user32.OpenInputDesktop(0, False, 0x0001)
@@ -95,6 +108,11 @@ def run():
                     missed = 0
                     continue
                 if is_locked():
+                    missed = 0
+                    continue
+                if is_user_active(5.0):
+                    if missed:
+                        log_service("User activity detected (typing/mouse); resetting missed count.")
                     missed = 0
                     continue
 

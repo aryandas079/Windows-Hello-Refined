@@ -112,6 +112,18 @@ class FaceDaemon:
             except Exception:
                 time.sleep(0.5)
 
+    def _is_user_active(self, idle_threshold_sec=5.0):
+        """Return True if user has interacted with keyboard or mouse recently."""
+        class LASTINPUTINFO(ctypes.Structure):
+            _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+        lii = LASTINPUTINFO()
+        lii.cbSize = ctypes.sizeof(LASTINPUTINFO)
+        if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
+            tick = ctypes.windll.kernel32.GetTickCount()
+            idle_sec = (tick - lii.dwTime) / 1000.0
+            return idle_sec < idle_threshold_sec
+        return False
+
     def _is_locked(self):
         """Return True when the active input desktop is the secure Winlogon desktop."""
         user32 = ctypes.windll.user32
@@ -152,6 +164,11 @@ class FaceDaemon:
                     self.presence_missed_checks = 0
                     continue
                 if self._is_locked():
+                    self.presence_missed_checks = 0
+                    continue
+                if self._is_user_active(5.0):
+                    if self.presence_missed_checks:
+                        log_service("User activity detected (typing/mouse); resetting missed-check count.")
                     self.presence_missed_checks = 0
                     continue
 
