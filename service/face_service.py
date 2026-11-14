@@ -350,6 +350,24 @@ class FaceDaemon:
                 log_service("Lock screen requested face verification...")
                 response = self.verify_current_face(timeout_sec=2.0)
                 log_service(f"Verification outcome: status={response.get('status')}")
+            elif cmd_str.startswith("SET_TIMEOUT"):
+                parts = cmd_str.split(None, 1)
+                sec_val = None
+                if len(parts) > 1 and parts[1].lower() != "never" and parts[1].lower() != "null":
+                    try:
+                        sec_val = int(parts[1])
+                    except ValueError:
+                        sec_val = None
+                from service.presence_config import save_timeout, label
+                save_timeout(sec_val)
+                self.presence_timeout = sec_val
+                self.presence_max_missed_checks = max_missed_checks(sec_val)
+                self.presence_missed_checks = 0
+                log_service(f"Presence timeout updated via pipe to: {label(sec_val)}")
+                response = {"status": "ok", "timeout": label(sec_val), "seconds": sec_val}
+            elif cmd_str == "GET_TIMEOUT":
+                from service.presence_config import label
+                response = {"status": "ok", "timeout": label(self.presence_timeout), "seconds": self.presence_timeout}
             elif cmd_str in ("STOP", "EXIT", "RESTART"):
                 log_service("Received STOP/RESTART command. Terminating daemon process immediately...")
                 try:
