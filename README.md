@@ -12,7 +12,7 @@ Created by **Aryan Das**
 - GitHub: [@aryandas079](https://github.com/aryandas079) (https://github.com/aryandas079)  
 - LinkedIn: [@iam-aryandas](https://linkedin.com/in/iam-aryandas) (https://linkedin.com/in/iam-aryandas)  
 
-It integrates directly into the genuine **Windows Lock Screen (`LogonUI.exe`)** using a native 64-bit C++ Windows Credential Provider. Before verification, the complete official-style animation appears in the top-center home area directly below the webcam, where the lock-screen clock is shown. After verification it displays a bold Segoe UI welcome message, fills the Windows Hello PIN, and unlocks.
+It integrates directly into the genuine **Windows Lock Screen (`LogonUI.exe`)** using a native 64-bit C++ Windows Credential Provider. During verification, a minimalist official-style animated eye appears in the top-center clock area directly below the webcam. If low lighting is detected, a bold low lighting indicator informs the user. After verification it displays a bold Segoe UI welcome message, plays the selected unlock feedback sound, fills the Windows Hello PIN, and unlocks.
 
 ---
 
@@ -24,13 +24,15 @@ The project combines low-level Windows operating system internals with modern de
 | Layer | Technologies Used | Description |
 | :--- | :--- | :--- |
 | **Biometric AI and Vision** | **OpenCV DNN**, **YuNet (2023mar)**, **SFace (2021dec)** | Lightweight CNNs for ultra-fast face detection (~15ms) and 128-dimensional feature embedding extraction (~35ms). |
-| **Liveness and Diagnostics** | **Laplacian Texture Variance**, **YCrCb Chromaticity**, landmarks, depth | Provides diagnostic signals for screens, prints, and static-image spoofing analysis. |
+| **Liveness and Diagnostics** | **Laplacian Texture Variance**, **YCrCb Chromaticity**, **MediaPipe 478 Mesh** | Evaluates 3D depth volume, surface curvature, optical Moiré patterns, and pure cheek skin texture to reject 2D screen and photo spoofs. |
 | **Lock Screen Integration** | **C++17**, **Windows Credential Provider SDK** (`ICredentialProviderCredential3`) | Native 64-bit DLL loaded directly by `LogonUI.exe` on the secure `Winlogon` desktop. |
 | **Visual Animation and HUD** | **Win32 Layered Windows**, **GDI+**, `BITMAPV5HEADER` | Transparent overlay in the lock-screen clock area, featuring gaze tracking, a 900-degree spin, wink, bold Segoe UI welcome text, and drop shadows. |
+| **Audio Feedback Engine** | **Win32 WaveOut**, **Direct Audio Routing**, `sound_config.py` | Plays selectable feedback chimes (Windows Hello chime, Windows Unlock, Chimes, Ding, Tada, or custom WAV) through system speakers with a silent option. |
 | **Biometric and Credential Vault**| **Windows DPAPI** (`CryptProtectData` / `CryptUnprotectData`) | Hardware-backed cryptographic protection tied directly to the current user's Windows security descriptor. |
 | **Inter-Process Communication** | **Win32 Named Pipes** (`\\.\pipe\WindowsHelloRefinedPipe`) | Secure, high-throughput IPC between the lock screen credential provider and the background vision daemon. |
 | **Automated Unlock Engine** | **Win32 `SendInput`** (`KEYEVENTF_UNICODE`) | Types the DPAPI-secured Windows Hello PIN directly into the active logon desktop for instant TPM-verified unlock on Windows 11. |
-| **Tooling and Compilers** | **MSVC x64** (`cl.exe`, `link.exe`), **Python 3.10+ Virtual Environment** | Visual Studio 2022/2026 C++ toolchain and Windows SDK (`user32`, `gdiplus`, `credui`, `secur32`, `wtsapi32`). |
+| **Presence & User Activity** | **Win32 `GetLastInputInfo`**, **DirectShow camera polling** | Automatically locks the workstation on prolonged face absence while preventing premature lockouts during active typing and mouse movement. |
+| **Tooling and Compilers** | **MSVC x64** (`cl.exe`, `link.exe`), **Python 3.10+ Virtual Environment** | Visual Studio 2022/2026 C++ toolchain and Windows SDK (`user32`, `gdiplus`, `credui`, `secur32`, `wtsapi32`, `winmm`). |
 
 ---
 
@@ -38,10 +40,12 @@ The project combines low-level Windows operating system internals with modern de
 
 - **One-Click Installation and Removal**: Single `install.bat` sets up everything; single `uninstall.bat` cleanly removes everything.
 - **Standard RGB Camera Support**: Works on 720p/1080p laptop webcams and USB cameras without infrared.
-- **Native Lock Screen Animation**: The complete “Looking for you...” animation appears in the top-center clock/home area, directly below the webcam, before the PIN section is shown.
-- **Verified Welcome Feedback**: After a match, the animation moves toward the PIN area and shows a clearly visible bold Segoe UI “Welcome, <username>” message before PIN entry.
-- **Wallpaper and Clock Maintained**: The transparent overlay does not replace the lock-screen wallpaper or clock. Cleanup disables promotional content while preserving the selected wallpaper and its cache.
-- **Ultra-Fast Camera Detection (<0.5s)**: Optimized Windows Media Foundation (MSMF) camera pipeline and lock-screen pre-warming unlock genuine users in less than 0.5 seconds (typically ~200ms).
+- **Minimalist Native Lock Screen Animation**: Clean animated eye overlay appears directly below the webcam in the top-center clock area without cluttering text.
+- **Low Light Indicator**: Displays a bold "Low lighting detected" subtitle below the eye animation when ambient illumination is insufficient.
+- **Selectable Unlock Sound**: Choose between the default Windows Hello chime, Windows Unlock, Windows Notify, classic chimes, custom WAV files, or silent mode.
+- **Verified Welcome Feedback**: After a match, displays a clearly visible bold Segoe UI "Welcome, <username>" message before PIN entry.
+- **Wallpaper and Clock Maintained**: The transparent overlay preserves the selected wallpaper and clock. Automatic cleanup removes promotional content and widgets while keeping Spotlight wallpaper rotation and "Like what you see?" controls.
+- **Ultra-Fast Camera Detection (<0.5s)**: Optimized DirectShow camera pipeline and lock-screen pre-warming unlock genuine users in less than 0.5 seconds (typically ~250ms - 380ms).
 - **12,500+ Dense 3D Depth Point Cloud Projection**: Projects over 12,500 continuous 3D depth points and wireframe Delaunay mesh lines across the facial manifold to compute 3D surface curvature, normal vector azimuth dispersion, and planarity ratio.
 - **Precision Anti-Spoofing vs. Phones, Photos, and Videos**: Multi-layer biometric defenses eliminate spoof attacks from mobile phone screens, tablets, printed photos, and replay videos via:
   - Phone chassis border and screen bezel edge detection
@@ -51,9 +55,8 @@ The project combines low-level Windows operating system internals with modern de
   - Biological hemoglobin subsurface scattering (melanin/Hb spectral absorption)
   - True 3D depth volume planarity verification (rejects flat 2D presentations)
 - **Hardware-Friendly**: Presence monitoring samples every 5 seconds and releases the camera between samples so the webcam LED turns off.
+- **Activity-Aware Walk-Away Auto-Lock**: Locks the workstation after the configured absence timeout. Active typing or mouse input resets the timer so the PC never locks prematurely while in use.
 - **Auto-Starts on Boot and Restart**: Automatically active when turning on your PC from shutdown or after rebooting.
-- **Lock Screen De-Cluttering**: Option during setup to remove lock-screen news, recommendations, tips, feeds, and widgets while keeping the wallpaper title and Like/Don't like controls.
-- **Walk-Away Auto-Lock**: While Windows is unlocked, the daemon samples the camera every 5 seconds and locks the workstation after the configured absence timeout.
 
 ---
 
@@ -78,17 +81,15 @@ The installer automatically guides you through the full onboarding:
 2. **Environment Setup**: Verifies Python 3.10+ and automatically sets up `.venv` with `requirements.txt`.
 3. **Face Biometric Enrollment**: Opens the camera HUD and captures 14 multi-angle samples (Look straight, Turn left, Turn right, Tilt/Smile).
 4. **Windows Hello PIN Setup**: Asks for your Windows Hello PIN once and encrypts it locally with Windows DPAPI.
-5. **Clean Lock Screen**: Asks whether to remove Windows Spotlight fun facts, “Like what you see?”/“Not for me” prompts, news, tips, feeds, detailed status apps, and MSN widgets while preserving the wallpaper, clock, and wallpaper cache.
-6. **Credential Provider Registration**: Registers `FaceCredentialProvider.dll` with Windows LogonUI (`regsvr32`).
-7. **Boot-Time Startup Service**: Registers a Windows Scheduled Task (`WindowsHelloRefinedDaemon`) to automatically run on computer startup, restart, and login.
-8. **Service Startup**: Launches the background daemon immediately so you are ready to use it without rebooting.
+5. **Clean Lock Screen**: Automatically declutters lock-screen news cards, widgets, tips, and promotional overlays while preserving wallpaper rotation and feedback controls.
+6. **Auto-Lock Timeout Configuration**: Prompts you to pick your preferred absence auto-lock duration (30s, 1m, 2m, 5m, 10m, 30m, 1hr, or Never).
+7. **Unlock Sound Preference**: Allows selecting an unlock feedback chime (with audio previews) or choosing silent mode.
+8. **Credential Provider Registration**: Registers `FaceCredentialProvider.dll` with Windows LogonUI (`regsvr32`).
+9. **Boot-Time Startup Service**: Registers a Windows Scheduled Task (`WindowsHelloRefinedDaemon`) to automatically run on computer startup, restart, and login.
+10. **Service Startup**: Launches the background daemon immediately so you are ready to use it without rebooting.
 
 ### 3. Test It
-Press <kbd>Win</kbd> + <kbd>L</kbd> to lock your screen. Look at your camera to verify and unlock!
-
-If you choose **Y** for lock-screen cleanup during installation, Windows keeps the current wallpaper and clock,
-preserves the wallpaper cache, and removes promotional suggestions, Spotlight trivia, feeds, widgets, and detailed status content.
-The saved PIN remains available internally so face verification can unlock automatically.
+Press <kbd>Win</kbd> + <kbd>L</kbd> to lock your screen. Look at your camera to verify and unlock.
 
 ---
 
@@ -132,7 +133,7 @@ Options:
   9. Run All-in-One Uninstaller (uninstall.bat)
  10. Clean Lock Screen (Remove News, Fun Facts, Tips & Widgets)
  11. Preview Transparent Windows Hello HTML/SVG Animation
-  12. Set Face-Absence Auto-Lock Timeout
+ 12. Set Face-Absence Auto-Lock Timeout
   0. Exit
 ```
 
@@ -147,11 +148,12 @@ flowchart TD
     B -->|Sends VERIFY over Named Pipe| D["service/face_service.py"]
     D -->|Opens Camera| E["Webcam Hardware (Index 0)"]
     E -->|Captured Frame| F["FaceEngine (YuNet + SFace)"]
-    F -->|Face Match| G{"Match >= 0.42?"}
+    F -->|Face Match| G{"Match >= 0.40 & Live?"}
     G -- No --> H["Screen stays on Clock & Wallpaper"]
     G -- Yes --> J["Decrypt PIN via Windows DPAPI"]
-    J -->|Return verified + PIN| B
+    J -->|Return verified + PIN + sound| B
     B -->|Moves Animation & Shows Bold Welcome| C
+    B -->|Plays Configured Unlock Sound| N["System Speakers or Silent"]
     B -->|SimulatePinInput via SendInput| K["Slide up curtain & Enter PIN"]
     K -->|TPM Authenticates| L["Windows Desktop Unlocked!"]
     D -->|Release Camera After Each 5s Sample| M["Webcam LED Off Between Checks"]
@@ -160,6 +162,16 @@ flowchart TD
 1. **Zero Cloud Dependencies**: 100% of detection, alignment, feature extraction, and matching runs entirely offline on your local machine.
 2. **DPAPI Hardware Binding**: Profiles and PINs are encrypted using Windows Data Protection API (`win32crypt.CryptProtectData`). Only your logged-in Windows security principal can decrypt them.
 3. **Hardware Privacy Indicator**: During presence monitoring, the camera is opened for each 5-second sample and released immediately (`cv2.VideoCapture.release()`), so the physical camera LED is off between checks. Lock-screen verification opens it only while verification is active.
+4. **Input-Gated Auto-Lock**: Hardware input signals (`GetLastInputInfo`) verify whether the keyboard or mouse was used recently, ensuring you are not locked out while looking down or reading.
+
+---
+
+## Contributing
+
+Contributions are welcome. We are actively seeking input from the computer vision and security community to further harden RGB anti-spoofing against high-res phone screen replays.
+
+- Check out the open issue: **[Strengthen Anti-Spoofing Against Phone Screens](https://github.com/aryandas079/Windows-Hello-Refined/issues)**
+- Feel free to submit an issue or open a Pull Request with improvements to `engine/face_engine.py`.
 
 ---
 
@@ -167,9 +179,10 @@ flowchart TD
 
 ```
 Windows Hello Refined/
-├── assets/                  # High-DPI icons & vector HUD assets
+├── assets/                  # High-DPI icons & audio assets
 │   ├── hello_normal.png     # Official Windows Hello face icon
-│   └── hello_wink.png       # Happy winking face icon
+│   ├── hello_wink.png       # Happy winking face icon
+│   └── hello_verified.wav   # Default soft chime feedback sound
 ├── credential_provider/     # Native 64-bit C++ Windows Credential Provider
 │   ├── build.bat            # MSVC compiler script
 │   ├── FaceCredential.cpp   # Credential tile logic & PIN auto-unlock simulation
@@ -189,6 +202,7 @@ Windows Hello Refined/
 │   ├── face_service.py      # Named pipe IPC daemon and configurable presence auto-lock
 │   ├── presence_service.py  # Interactive-user 5-second camera pulse watcher
 │   ├── presence_config.py   # Auto-lock presets and persisted timeout
+│   ├── sound_config.py      # Unlock feedback sound selector & preview engine
 │   └── session_guard.py     # Walk-away auto-lock presence monitor
 ├── clean_lockscreen.py      # De-clutter utility that preserves wallpaper assets
 ├── install.bat              # Single All-in-One installer (Setup + PIN + Clean + Register + Auto-Start)
@@ -227,4 +241,4 @@ Get-Content -Path "C:\Users\Public\WindowsHelloRefined.log" -Wait -Tail 30
 
 ## License
 
-This project is licensed under the Apache License, Version 2.0. See the [LICENSE](file:///d:/Projects_New/Windows%20Hello%20Refined/LICENSE) file for the full license text.
+This project is licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for the full license text.
