@@ -985,73 +985,42 @@ void FaceOverlay::RenderFrame(Gdiplus::Graphics& g, int width, int height)
         {
             if (m_bLowLight)
             {
-                Gdiplus::Font fontMain(&ff, 11.5f, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
-                Gdiplus::Font fontSub(&ff, 10.0f, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
-
-                float mainY = 82.0f;
-                float subY = 104.0f;
-                float textH = 22.0f;
+                Gdiplus::Font fontLowLight(&ff, 11.0f, Gdiplus::FontStyleBold, Gdiplus::UnitPoint);
+                float subY = 92.0f;
+                float textH = 24.0f;
 
                 if (!bLightTheme)
                 {
-                    Gdiplus::RectF tsMain(0.0f, mainY + 1.5f, (float)width, textH);
-                    g.DrawString(m_statusText, -1, &fontMain, tsMain, &sf, &shadowBrush);
-
                     Gdiplus::RectF tsSub(0.0f, subY + 1.5f, (float)width, textH);
-                    g.DrawString(L"Low lighting detected", -1, &fontSub, tsSub, &sf, &shadowBrush);
+                    g.DrawString(L"Low lighting detected", -1, &fontLowLight, tsSub, &sf, &shadowBrush);
                 }
 
-                Gdiplus::RectF trMain(0.0f, mainY, (float)width, textH);
-                g.DrawString(m_statusText, -1, &fontMain, trMain, &sf, &textBrush);
-
-                Gdiplus::Color subColor = bLightTheme ? Gdiplus::Color(255, 100, 100, 100) : Gdiplus::Color(230, 215, 215, 215);
+                Gdiplus::Color subColor = bLightTheme ? Gdiplus::Color(255, 60, 60, 60) : Gdiplus::Color(255, 255, 255, 255);
                 Gdiplus::SolidBrush subBrush(subColor);
                 Gdiplus::RectF trSub(0.0f, subY, (float)width, textH);
-                g.DrawString(L"Low lighting detected", -1, &fontSub, trSub, &sf, &subBrush);
-            }
-            else
-            {
-                Gdiplus::Font font(&ff, 12.0f, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
-                float textY = 86.0f;
-                float textH = 30.0f;
-                if (!bLightTheme)
-                {
-                    Gdiplus::RectF ts(0.0f, textY + 1.5f, (float)width, textH);
-                    g.DrawString(m_statusText, -1, &font, ts, &sf, &shadowBrush);
-                }
-                Gdiplus::RectF tr(0.0f, textY, (float)width, textH);
-                g.DrawString(m_statusText, -1, &font, tr, &sf, &textBrush);
+                g.DrawString(L"Low lighting detected", -1, &fontLowLight, trSub, &sf, &subBrush);
             }
         }
         else
         {
             // On Lock Screen: Keep clean look normally;
-            // When low light is detected, mention low lighting below the looking for you eye animation
+            // When low light is detected, display bold "Low lighting detected" directly below the eye animation
             if (m_bLowLight)
             {
-                Gdiplus::Font fontMain(&ff, 12.0f, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
-                Gdiplus::Font fontSub(&ff, 10.5f, Gdiplus::FontStyleRegular, Gdiplus::UnitPoint);
-
-                float mainY = 56.0f;
-                float subY = 76.0f;
-                float textH = 20.0f;
+                Gdiplus::Font fontLowLight(&ff, 11.5f, Gdiplus::FontStyleBold, Gdiplus::UnitPoint);
+                float subY = 62.0f;
+                float textH = 24.0f;
 
                 if (!bLightTheme)
                 {
-                    Gdiplus::RectF tsMain(0.0f, mainY + 1.5f, (float)width, textH);
-                    g.DrawString(L"Looking for you...", -1, &fontMain, tsMain, &sf, &shadowBrush);
-
                     Gdiplus::RectF tsSub(0.0f, subY + 1.5f, (float)width, textH);
-                    g.DrawString(L"Low lighting detected", -1, &fontSub, tsSub, &sf, &shadowBrush);
+                    g.DrawString(L"Low lighting detected", -1, &fontLowLight, tsSub, &sf, &shadowBrush);
                 }
 
-                Gdiplus::RectF trMain(0.0f, mainY, (float)width, textH);
-                g.DrawString(L"Looking for you...", -1, &fontMain, trMain, &sf, &textBrush);
-
-                Gdiplus::Color subColor = Gdiplus::Color(220, 215, 215, 215);
+                Gdiplus::Color subColor = Gdiplus::Color(255, 255, 255, 255);
                 Gdiplus::SolidBrush subBrush(subColor);
                 Gdiplus::RectF trSub(0.0f, subY, (float)width, textH);
-                g.DrawString(L"Low lighting detected", -1, &fontSub, trSub, &sf, &subBrush);
+                g.DrawString(L"Low lighting detected", -1, &fontLowLight, trSub, &sf, &subBrush);
             }
         }
     }
