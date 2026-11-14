@@ -254,12 +254,12 @@ class FaceEngine:
         dist_from_center = np.sqrt((x - cx) ** 2 + (y - cy) ** 2)
         r_max = min(cy, cx)
 
-        high_freq_mask = dist_from_center > (r_max * 0.50)
+        high_freq_mask = dist_from_center > (r_max * 0.45)
         hf_energy = float(np.mean(magnitude[high_freq_mask]))
         lf_energy = float(np.mean(magnitude[~high_freq_mask]))
         ratio = hf_energy / (lf_energy + 1e-6)
 
-        is_screen = (ratio > 0.770)
+        is_screen = (ratio > 0.690)
         return is_screen, ratio
 
     def detect_screen_bezel(self, frame, face):
@@ -303,12 +303,13 @@ class FaceEngine:
                         if 1.2 <= aspect <= 2.5:
                             return True
 
-        # 2. Check for straight vertical bezel lines flanking both sides of the face
+        # 2. Check for straight vertical bezel lines flanking the face
         min_len = max(22, int(s_fh * 0.45))
         lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 26, minLineLength=min_len, maxLineGap=12)
         if lines is not None:
             vl = []
             vr = []
+            hl = []
             for l in lines:
                 lx1, ly1, lx2, ly2 = l.flatten()
                 dx, dy = abs(lx2 - lx1), abs(ly2 - ly1)
@@ -320,6 +321,11 @@ class FaceEngine:
                             vl.append(mid_x)
                         elif mid_x > (s_fx + s_fw):
                             vr.append(mid_x)
+                elif dx > dy * 2.2:  # Horizontal line (top/bottom phone border)
+                    mid_y = (ly1 + ly2) // 2
+                    mid_x = (lx1 + lx2) // 2
+                    if abs(mid_x - (s_fx + s_fw // 2)) < s_fw * 1.5:
+                        hl.append(mid_y)
 
             # Check bilateral vertical line pairs flanking the face
             for xl in set(vl):
@@ -340,11 +346,42 @@ class FaceEngine:
                             contrast_r = in_r - out_r
 
                             # A phone screen display exhibits bright interior and dark bezel exterior on both sides
-                            if (contrast_l > 15.0 and contrast_r > 15.0) or (contrast_l + contrast_r > 40.0):
+                            if (contrast_l > 12.0 and contrast_r > 12.0) or (contrast_l + contrast_r > 30.0):
                                 return True
                             # Strong geometric chassis line pair with sharp borders
-                            if abs(contrast_l) > 28.0 and abs(contrast_r) > 28.0:
+                            if abs(contrast_l) > 22.0 and abs(contrast_r) > 22.0:
                                 return True
+
+            # Check single prominent vertical bezel flanking the face (e.g. one side hand-occluded)
+            for xl in set(vl):
+                if (s_fx - xl) <= s_fw * 2.0:
+                    y1 = max(0, s_fy)
+                    y2 = min(small_h, s_fy + s_fh)
+                    if y2 - y1 >= 10:
+                        out_l = float(np.mean(gray_small[y1:y2, max(0, xl - 12):max(1, xl - 2)]))
+                        in_l  = float(np.mean(gray_small[y1:y2, min(small_w - 2, xl + 2):min(small_w, xl + 12)]))
+                        if abs(in_l - out_l) > 28.0:
+                            return True
+            for xr in set(vr):
+                if (xr - (s_fx + s_fw)) <= s_fw * 2.0:
+                    y1 = max(0, s_fy)
+                    y2 = min(small_h, s_fy + s_fh)
+                    if y2 - y1 >= 10:
+                        in_r  = float(np.mean(gray_small[y1:y2, max(0, xr - 12):max(1, xr - 2)]))
+                        out_r = float(np.mean(gray_small[y1:y2, min(small_w - 2, xr + 2):min(small_w, xr + 12)]))
+                        if abs(in_r - out_r) > 28.0:
+                            return True
+
+            # Check horizontal phone bezel above hair or below chin
+            for yh in set(hl):
+                if yh < s_fy or yh > (s_fy + s_fh):
+                    x1 = max(0, s_fx)
+                    x2 = min(small_w, s_fx + s_fw)
+                    if x2 - x1 >= 10:
+                        above = float(np.mean(gray_small[max(0, yh - 10):max(1, yh - 2), x1:x2]))
+                        below = float(np.mean(gray_small[min(small_h - 2, yh + 2):min(small_h, yh + 10), x1:x2]))
+                        if abs(above - below) > 30.0:
+                            return True
 
         # 3. Also check close-up face crop for phone held very close to the lens
         pad_w = int(fw * 0.45)
@@ -675,62 +712,61 @@ class FaceEngine:
                 has_cheek_skin = True
 
         # Pure skin OLED/LCD subpixel emitter raster check:
-        # Real human cheek skin on webcam has Laplacian variance 5-350.
+        # Real human cheek skin on webcam has Laplacian variance 15-300.
         # Smartphone screens emit RGB subpixel micro-matrices with variance > 1200 (typically 2500-4500).
         if has_cheek_skin:
-            if cheek_lap > 850.0:
-                self._spoof_cooldown = 35
+            if cheek_lap > 650.0:
+                self._spoof_cooldown = 50
                 self.reset_blink_history(clear_cooldown=False)
-                return False, 0.05, f"Digital screen subpixel raster detected (skin_lap={cheek_lap:.0f} > 850)"
+                return False, 0.05, f"Digital screen subpixel raster detected (skin_lap={cheek_lap:.0f} > 650)"
 
             # OLED display wide-gamut chrominance dispersion on skin:
-            # Blue OLED emitters push skin Cb chrominance spread far beyond the natural melanin locus (>16.5 vs <10.0).
-            if cheek_cb_std > 16.5:
-                self._spoof_cooldown = 35
+            # Blue OLED emitters push skin Cb chrominance spread far beyond the natural melanin locus (>14.0 vs <10.0).
+            if cheek_cb_std > 14.0:
+                self._spoof_cooldown = 50
                 self.reset_blink_history(clear_cooldown=False)
-                return False, 0.05, f"Unnatural OLED display color gamut detected (skin_cb_std={cheek_cb_std:.1f} > 16.5)"
+                return False, 0.05, f"Unnatural OLED display color gamut detected (skin_cb_std={cheek_cb_std:.1f} > 14.0)"
 
             # 2D FFT subpixel frequency grid check on cheek skin
             if cheek_gray is not None:
                 is_screen, fft_ratio = self.check_screen_frequency(cheek_gray)
-                if is_screen:
-                    self._spoof_cooldown = 35
+                if is_screen or fft_ratio > 0.690:
+                    self._spoof_cooldown = 50
                     self.reset_blink_history(clear_cooldown=False)
-                    return False, 0.05, f"Display subpixel raster grid detected (fft={fft_ratio:.3f} > 0.770)"
+                    return False, 0.05, f"Display subpixel raster grid detected (fft={fft_ratio:.3f} > 0.690)"
 
             # Biological skin subsurface scattering check (melanin & hemoglobin absorption):
             if patch_l.size > 0:
                 b_mean = float(np.mean(patch_l[:, :, 0]))
                 r_mean = float(np.mean(patch_l[:, :, 2])) + 1e-5
                 br_ratio = b_mean / r_mean
-                if br_ratio > 1.25:
-                    self._spoof_cooldown = 35
+                if br_ratio > 0.860 and b_mean > 40.0:
+                    self._spoof_cooldown = 50
                     self.reset_blink_history(clear_cooldown=False)
-                    return False, 0.05, f"Unnatural display spectral emission detected (skin_BR={br_ratio:.2f} > 1.25)"
+                    return False, 0.05, f"Unnatural display spectral emission detected (skin_BR={br_ratio:.2f} > 0.86)"
 
         # Physical screen check 2: Subpixel frequency & raster across full face bounding box
         is_face_screen, face_fft_ratio = self.check_screen_frequency(gray_roi)
-        if is_face_screen:
-            self._spoof_cooldown = 35
+        if is_face_screen or face_fft_ratio > 0.690:
+            self._spoof_cooldown = 50
             self.reset_blink_history(clear_cooldown=False)
-            return False, 0.05, f"Display screen subpixel frequency grid detected (face_fft={face_fft_ratio:.3f} > 0.770)"
+            return False, 0.05, f"Display screen subpixel frequency grid detected (face_fft={face_fft_ratio:.3f} > 0.690)"
 
         lap_var = float(cv2.Laplacian(gray_roi, cv2.CV_64F).var())
-        if lap_var < 9.0:
+        if lap_var < 10.0:
             return False, 0.05, "Extreme blur or flat paper print detected"
-        if lap_var > 850.0:
-            self._spoof_cooldown = 35
+        if lap_var > 650.0:
+            self._spoof_cooldown = 50
             self.reset_blink_history(clear_cooldown=False)
-            return False, 0.05, f"Digital screen high-frequency raster detected (face_lap={lap_var:.0f} > 850)"
+            return False, 0.05, f"Digital screen high-frequency raster detected (face_lap={lap_var:.0f} > 650)"
 
-        # Physical screen check 3: Specular glass mirror glare (robust percentage check)
-        # Prevents false positives from spectacles or room ceiling light glints
-        # Only triggers when over 18% of the entire face box is blown out by a reflective phone/tablet glass screen
+        # Physical screen check 3: Specular glass mirror glare
+        # Phone / tablet glass screens produce flat specular reflections
         specular_ratio = float(np.sum(gray_roi > 248)) / float(gray_roi.size + 1e-6)
-        if specular_ratio > 0.18:
-            self._spoof_cooldown = 35
+        if specular_ratio > 0.10:
+            self._spoof_cooldown = 50
             self.reset_blink_history(clear_cooldown=False)
-            return False, 0.05, f"Flat screen glass mirror glare detected (specular={specular_ratio * 100:.1f}% > 18%)"
+            return False, 0.05, f"Flat screen glass mirror glare detected (specular={specular_ratio * 100:.1f}% > 10%)"
 
         # Layer 4: Full face YCrCb color gamut check
         ycrcb = cv2.cvtColor(face_roi, cv2.COLOR_BGR2YCrCb)
@@ -739,8 +775,8 @@ class FaceEngine:
         cb_std = float(np.std(cb))
         if cr_std < 0.8 or cb_std < 0.8:
             return False, 0.05, "Abnormal color compression (monochrome or cheap print)"
-        if cr_std > 28.0 or cb_std > 22.0:
-            self._spoof_cooldown = 35
+        if cr_std > 25.0 or cb_std > 18.0:
+            self._spoof_cooldown = 50
             self.reset_blink_history(clear_cooldown=False)
             return False, 0.05, "Unnatural digital screen saturation detected (phone spoof)"
 
@@ -762,12 +798,8 @@ class FaceEngine:
         depth_span = depth_info['depth_span']
         self._depth_history.append(depth_nose)
 
-        # On a living 3D face, 12,500+ depth points must demonstrate true physical 3D curvature:
-        # 1. 3D volume planarity ratio >= 0.025 (rejects flat phone screens, photos, and video displays)
-        # 2. Surface normal vectors must fan out across facial curves (azimuth_std >= 0.20 rad)
-        # 3. Nose prominence >= 0.038 and ear depth >= 0.090 and total span >= 0.110
         if not depth_info['is_3d_convex']:
-            self._spoof_cooldown = 35
+            self._spoof_cooldown = 50
             self.reset_blink_history(clear_cooldown=False)
             return False, 0.05, (
                 f"Flat 2D planar presentation detected (planarity={planarity:.4f} < 0.025, "
@@ -787,9 +819,6 @@ class FaceEngine:
         self._iris_history.append(iris_val)
 
         # 3D motion parallax: Nose-to-eye asymmetry ratio
-        # When a genuine 3D head moves or rotates, perspective projection causes the nose tip
-        # to shift relative to the eye corners. On a flat 2D photo or phone screen, all points
-        # are locked to a single rigid plane with zero 3D parallax!
         p_nose = np.array([landmarks[1].x, landmarks[1].y])
         p_leye = np.array([landmarks[33].x, landmarks[33].y])
         p_reye = np.array([landmarks[263].x, landmarks[263].y])
@@ -821,18 +850,18 @@ class FaceEngine:
             prev_pts = self._landmarks_history[-1]
             shift = float(np.mean(np.linalg.norm(key_pts_2d - prev_pts, axis=1)))
             # If the face or device moved slightly in space (e.g. hand tremor)
-            if shift >= 1.5:
+            if shift >= 1.0:
                 H_mat, _ = cv2.findHomography(prev_pts, key_pts_2d, cv2.RANSAC, 2.5)
                 if H_mat is not None:
                     pred_pts = cv2.perspectiveTransform(prev_pts.reshape(-1, 1, 2), H_mat).reshape(-1, 2)
                     res_err = float(np.mean(np.linalg.norm(pred_pts - key_pts_2d, axis=1)))
-                    # Rigid 2D screen/photo moving in hand has near-zero homography residual (< 0.22 px)
-                    if res_err < 0.22:
+                    # Rigid 2D screen/photo moving in hand has near-zero homography residual (< 0.28 px)
+                    if res_err < 0.28:
                         is_planar_motion = True
         self._landmarks_history.append(key_pts_2d)
 
         if is_planar_motion:
-            self._spoof_cooldown = 35
+            self._spoof_cooldown = 50
             self.reset_blink_history(clear_cooldown=False)
             return False, 0.05, "Flat 2D screen presentation detected under motion (phone video/screen spoof)"
 
@@ -846,81 +875,44 @@ class FaceEngine:
             )
             self._blendshape_history.append(bs_val)
 
-        # Evaluate temporal biological traits:
-        # Fast physiological verification for <0.5s unlocking:
-        # During the first 3 frames (~100-130ms), collect baseline signals without premature bypass.
-        # From frame 4 onwards, genuine human ocular saccades, micro-sway, or micro-expression grant verification.
-        n_frames = len(self._ear_values)
-        if n_frames < 4:
-            dynamic_score = 0.35
-            dynamic_msg = "Gathering physiological baseline..."
-            is_gathering = True
-        else:
-            is_gathering = False
-            ear_min, ear_max = min(self._ear_values), max(self._ear_values)
-            ear_span = ear_max - ear_min
-            iris_span = (max(self._iris_history) - min(self._iris_history)) if self._iris_history else 0.0
-            bs_span = (max(self._blendshape_history) - min(self._blendshape_history)) if self._blendshape_history else 0.0
-            asym_std = float(np.std(self._asym_history)) if len(self._asym_history) >= 4 else 0.0
-            geom_std = float(np.std(self._geom_history)) if len(self._geom_history) >= 4 else 0.0
-
-            # Physiological thresholds of a live human:
-            is_blink = (ear_span >= 0.048 and ear_min < 0.22 and ear_max > 0.24) or (bs_span >= 0.30)
-            is_ocular = (iris_span >= 0.012)   # Ocular micro-saccades
-            is_expression = (bs_span >= 0.035) # Genuine facial muscle movement
-            is_parallax = (asym_std >= 0.0035 or geom_std >= 0.0045) # 3D head micro-sway parallax
-
-            if is_blink:
-                dynamic_score = 1.0
-                dynamic_msg = "Blink verified"
-            elif is_ocular:
-                dynamic_score = 0.95
-                dynamic_msg = "Ocular saccades verified"
-            elif is_parallax:
-                dynamic_score = 0.92
-                dynamic_msg = "3D motion parallax verified"
-            elif is_expression:
-                dynamic_score = 0.90
-                dynamic_msg = "Micro-expression verified"
-            else:
-                dynamic_score = 0.05
-                dynamic_msg = "Motionless presentation"
-
-            # Motionless presentation rejection after 5+ frames (~160ms motionless photo/screen)
-            if n_frames >= 5 and dynamic_score <= 0.10:
-                self._spoof_cooldown = 35
-                self.reset_blink_history(clear_cooldown=False)
-                return False, 0.05, "Static photo / motionless display detected (spoof)"
-
-        if is_gathering:
-            return False, 0.45, f"Verifying physiological dynamics ({dynamic_msg})"
-
         # Texture score calibrated on pure human skin
         skin_lap_val = cheek_lap if has_cheek_skin else lap_var
-        if skin_lap_val <= 350.0:
-            texture_score = min(1.0, max(0.0, (skin_lap_val - 5.0) / 80.0))
+        if skin_lap_val <= 300.0:
+            texture_score = min(1.0, max(0.0, (skin_lap_val - 10.0) / 75.0))
         else:
-            texture_score = max(0.0, 1.0 - (skin_lap_val - 350.0) / 500.0)
+            texture_score = max(0.0, 1.0 - (skin_lap_val - 300.0) / 350.0)
 
         # Color naturalness score calibrated on pure human skin chrominance
         cb_val = cheek_cb_std if has_cheek_skin else cb_std
-        color_score = max(0.0, 1.0 - max(0.0, cb_val - 4.0) / 10.0)
+        color_score = max(0.0, 1.0 - max(0.0, cb_val - 3.5) / 8.0)
 
         # 3D Depth score: Prominent nose and ear curvature
-        depth_score = min(1.0, max(0.0, (depth_nose - 0.035) / 0.045))
+        depth_score = min(1.0, max(0.0, (depth_nose - 0.035) / 0.040))
 
-        # Composite liveness score
-        liveness_score = (
-            texture_score * 0.30 +
-            color_score   * 0.25 +
-            depth_score   * 0.20 +
-            dynamic_score * 0.25
+        # Optical physical score
+        optical_score = (
+            texture_score * 0.40 +
+            color_score   * 0.35 +
+            depth_score   * 0.25
         )
 
-        if liveness_score < 0.60:
-            return False, liveness_score, f"Liveness check failed ({dynamic_msg}, score={liveness_score:.2f})"
+        n_frames = len(self._ear_values)
+        # Check for static photo / frozen display spoof after 6+ frames
+        if n_frames >= 6:
+            ear_min, ear_max = min(self._ear_values), max(self._ear_values)
+            ear_span = ear_max - ear_min
+            iris_span = (max(self._iris_history) - min(self._iris_history)) if self._iris_history else 0.0
+            if len(self._landmarks_history) >= 6:
+                tot_motion = float(np.mean(np.linalg.norm(self._landmarks_history[-1] - self._landmarks_history[-6], axis=1)))
+                if tot_motion < 0.6 and ear_span < 0.015 and iris_span < 0.015:
+                    self._spoof_cooldown = 50
+                    self.reset_blink_history(clear_cooldown=False)
+                    return False, 0.05, "Static photo / motionless display detected (spoof)"
 
-        return True, liveness_score, f"Live human verified ({dynamic_msg})"
+        if optical_score < 0.60:
+            return False, optical_score, f"Liveness check failed (score={optical_score:.2f})"
+
+        return True, optical_score, "Live human verified (biological skin & 3D anatomy verified)"
 
     # ------------------------------------------------------------------
     # Embedding extraction and matching

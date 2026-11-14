@@ -17,6 +17,7 @@ import win32security
 import pywintypes
 import ctypes
 import cv2
+import numpy as np
 
 # Ensure root dir is in path
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -243,6 +244,10 @@ class FaceDaemon:
         username = self.profile["username"]
         enrolled = self.profile["embeddings"]
 
+        if self.engine._spoof_cooldown > 0:
+            log_service(f"Spoof cooldown active ({self.engine._spoof_cooldown} frames remaining). Rejecting verification.")
+            return {"status": "failed", "message": f"Spoof cooldown active ({self.engine._spoof_cooldown} frames remaining)"}
+
         with self.camera_lock:
             log_service("Opening camera for fast <0.5s face verification...")
             try:
@@ -253,7 +258,7 @@ class FaceDaemon:
                 start_time = time.perf_counter()
                 frames_tested = 0
                 consecutive_verified = 0
-                self.engine.reset_blink_history(clear_cooldown=True)
+                self.engine.reset_blink_history(clear_cooldown=False)
 
                 while time.perf_counter() - start_time < timeout_sec:
                     ret, frame = self.camera.read()
@@ -305,7 +310,7 @@ class FaceDaemon:
                             consecutive_verified = 0
                             # If an explicit spoof attack was detected (phone chassis, subpixel raster, photo):
                             # ABORT THE SESSION IMMEDIATELY! Do NOT allow subsequent frames to unlock!
-                            if not is_live and any(kw in liveness_msg.lower() for kw in ("spoof", "screen", "bezel", "chassis", "raster", "static photo")):
+                            if not is_live and any(kw in liveness_msg.lower() for kw in ("spoof", "screen", "bezel", "chassis", "raster", "static photo", "planar", "glare", "gamut", "spectral")):
                                 log_service(f"SPOOF ATTACK DETECTED: {liveness_msg}. Immediately aborting verification session.")
                                 return {"status": "failed", "message": f"Spoof detected: {liveness_msg}"}
 
