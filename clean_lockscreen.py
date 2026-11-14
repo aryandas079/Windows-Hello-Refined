@@ -133,6 +133,9 @@ def clean_lock_screen():
     # Spotlight overlay enabled for the wallpaper title and Like/Don't like UI.
     cached_content_ids = (
         "202914", "280810", "280811", "280815",
+        "310091", "310092", "310093", "314559", "314563",
+        "338380", "338381", "338387", "338388", "338389", "338393",
+        "353694", "353696", "353698",
         "88000045", "88000161", "88000163", "88000165",
     )
     for content_id in cached_content_ids:
