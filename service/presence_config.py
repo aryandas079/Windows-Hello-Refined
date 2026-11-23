@@ -6,7 +6,7 @@ CONFIG_FILE = os.path.join(
     "data",
     "presence_config.json",
 )
-CHECK_INTERVAL = 5.0
+CHECK_INTERVAL = 3.0
 PRESETS = (
     ("30s", 30),
     ("1m", 60),

@@ -65,6 +65,8 @@ class FaceDaemon:
         self.engine = FaceEngine()
         self.profile = load_profile()
         self.camera = None
+        from service.brightness import BrightnessController
+        self.brightness = BrightnessController(log_service)
         if self.profile:
             log_service(f"Loaded profile for user: {self.profile['username']} ({len(self.profile['embeddings'])} embeddings)")
         else:
@@ -125,11 +127,12 @@ class FaceDaemon:
         return False
 
     def _is_locked(self):
-        """Return True when the active input desktop is the secure Winlogon desktop."""
+        """Return True when the active input desktop is the secure Winlogon desktop or access-denied."""
         user32 = ctypes.windll.user32
         h_desk = user32.OpenInputDesktop(0, False, 0x0001)
         if not h_desk:
-            return False
+            err = ctypes.GetLastError()
+            return (err == 5)
 
         try:
             buf = ctypes.create_unicode_buffer(64)
@@ -141,8 +144,40 @@ class FaceDaemon:
         finally:
             user32.CloseDesktop(h_desk)
 
+    def _is_presence_service_running(self):
+        """Check if standalone presence_service.py is running to avoid camera contention."""
+        kernel32 = ctypes.windll.kernel32
+        h_mutex = kernel32.OpenMutexW(0x00100000, False, "Global\\WindowsHelloRefinedPresence")
+        if h_mutex:
+            kernel32.CloseHandle(h_mutex)
+            return True
+        return False
+
+    def _is_valid_face_presence(self, frame, face):
+        """Validate face presence to avoid phantom resets caused by background noise or low light."""
+        if face is None:
+            return False
+        w, h = int(face[2]), int(face[3])
+        if w < 50 or h < 50:
+            return False
+        conf = float(face[14]) if len(face) > 14 else 1.0
+        if conf < 0.65:
+            return False
+        H, W = frame.shape[:2]
+        x1, y1 = max(0, int(face[0])), max(0, int(face[1]))
+        x2, y2 = min(W, x1 + w), min(H, y1 + h)
+        crop = frame[y1:y2, x1:x2]
+        if crop.size == 0:
+            return False
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        mean_lum = float(np.mean(gray))
+        lap_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        if mean_lum < 12.0 or lap_var < 0.8:
+            return False
+        return True
+
     def _run_presence_monitor(self):
-        """Lock after the configured face-absence timeout."""
+        """Lock immediately after the configured face-absence timeout runs out."""
         log_service(
             "Presence monitor active: every %.1fs; auto-lock after %s."
             % (
@@ -152,24 +187,30 @@ class FaceDaemon:
         )
 
         next_check = time.monotonic()
+        absence_start = None
+
         while True:
             self.presence_timeout = load_timeout()
-            self.presence_max_missed_checks = max_missed_checks(self.presence_timeout)
             next_check += self.presence_interval
             delay = next_check - time.monotonic()
             if delay > 0:
                 time.sleep(delay)
             try:
+                # If standalone presence_service is running, let it handle presence to avoid camera clash
+                if self._is_presence_service_running():
+                    absence_start = None
+                    continue
+
                 if self.presence_timeout is None:
-                    self.presence_missed_checks = 0
+                    absence_start = None
                     continue
                 if self._is_locked():
-                    self.presence_missed_checks = 0
+                    absence_start = None
                     continue
-                if self._is_user_active(5.0):
-                    if self.presence_missed_checks:
-                        log_service("User activity detected (typing/mouse); resetting missed-check count.")
-                    self.presence_missed_checks = 0
+                if self._is_user_active(self.presence_interval):
+                    if absence_start is not None:
+                        log_service("User activity detected (typing/mouse); resetting absence timer.")
+                    absence_start = None
                     continue
 
                 # Do not compete with an active lock-screen verification.
@@ -184,7 +225,7 @@ class FaceDaemon:
                         if ret:
                             sample_ok = True
                             face, _ = self.engine.detect_face(frame)
-                            present = face is not None
+                            present = self._is_valid_face_presence(frame, face)
                 finally:
                     self.release_camera()
                     self.camera_lock.release()
@@ -193,30 +234,32 @@ class FaceDaemon:
                     continue
 
                 if present:
-                    if self.presence_missed_checks:
-                        log_service("Presence detected again; resetting missed-check count.")
-                    self.presence_missed_checks = 0
+                    if absence_start is not None:
+                        log_service("Presence confirmed in front of screen; user active.")
+                    absence_start = None
                     continue
 
-                self.presence_missed_checks += 1
-                log_service(
-                    "No face detected; missed presence check %d/%d."
-                    % (self.presence_missed_checks, self.presence_max_missed_checks)
-                )
-                if self.presence_missed_checks >= self.presence_max_missed_checks:
+                now = time.monotonic()
+                if absence_start is None:
+                    absence_start = now
+
+                elapsed = now - absence_start
+                log_service(f"No face detected; absence duration: {elapsed:.1f}s / {self.presence_timeout}s.")
+
+                if elapsed >= float(self.presence_timeout):
                     log_service(
-                        "No face detected for %d checks (%ds); locking workstation."
-                        % (
-                            self.presence_max_missed_checks,
-                            int(self.presence_interval * self.presence_max_missed_checks),
-                        )
+                        f"No face detected for {elapsed:.1f}s (configured timeout: {label(self.presence_timeout)} reached). "
+                        "Locking workstation immediately!"
                     )
                     ctypes.windll.user32.LockWorkStation()
-                    self.presence_missed_checks = 0
-                    time.sleep(5.0)
+                    try:
+                        subprocess.run(["rundll32.exe", "user32.dll,LockWorkStation"], check=False)
+                    except Exception:
+                        pass
+                    absence_start = None
+                    time.sleep(4.0)
             except Exception as exc:
-                # A camera or desktop-transition failure must not be treated
-                # as proof that the user is absent.
+                absence_start = None
                 log_service("Presence monitor sample skipped: %s" % exc)
 
     def ensure_camera(self):
@@ -245,11 +288,12 @@ class FaceDaemon:
 
             threading.Thread(target=_close_cam, daemon=True).start()
 
-    def verify_current_face(self, timeout_sec=2.0):
+    def verify_current_face(self, timeout_sec=2.0, is_lock_screen=None):
         """
         Runs face recognition with ultra-fast <0.5s matching, 12,500+ dense 3D depth
         biometrics, and multi-layer anti-spoofing against phones, photos, and videos.
         GUARANTEES camera is opened only during verification and released immediately after.
+        If low light is detected on the lock screen, brightens display panel to 100% to illuminate user.
         """
         if not self.profile:
             self.profile = load_profile()
@@ -259,8 +303,12 @@ class FaceDaemon:
         username = self.profile["username"]
         enrolled = self.profile["embeddings"]
 
+        if is_lock_screen is None:
+            is_lock_screen = self._is_locked()
+
+        boosted = False
         with self.camera_lock:
-            log_service("Opening camera for fast <0.5s face verification...")
+            log_service(f"Opening camera for fast face verification (is_lock_screen={is_lock_screen})...")
             try:
                 if not self.ensure_camera():
                     log_service("ERROR: Could not access camera.")
@@ -280,10 +328,25 @@ class FaceDaemon:
                     frames_tested += 1
                     gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                     mean_luminance = float(np.mean(gray_frame))
-                    if mean_luminance < 75.0:
-                        detected_low_light = True
+                    face_luminance = mean_luminance
 
                     face, status = self.engine.detect_face(frame)
+                    if face is not None:
+                        H, W = frame.shape[:2]
+                        fx, fy, fw, fh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
+                        crop = gray_frame[max(0, fy):min(H, fy + fh), max(0, fx):min(W, fx + fw)]
+                        if crop.size > 0:
+                            face_luminance = float(np.mean(crop))
+
+                    if mean_luminance < 85.0 or face_luminance < 85.0:
+                        detected_low_light = True
+                        if is_lock_screen and not boosted:
+                            boosted = self.brightness.boost()
+                            if boosted:
+                                log_service(
+                                    f"Low light detected (frame={mean_luminance:.1f}, face={face_luminance:.1f} < 85.0). "
+                                    "Brightening screen to 100% on lock screen to illuminate face."
+                                )
 
                     if face is None:
                         # If no face is in front of the lens after 2 frames (~350ms),
@@ -366,6 +429,12 @@ class FaceDaemon:
                 log_service(f"Face verification timed out after {frames_tested} frames ({elapsed_total:.1f}ms).")
                 return {"status": "failed", "message": "Face verification timed out", "low_light": detected_low_light}
             finally:
+                if boosted:
+                    # Keep brightness at 100% for 2.0s so illumination smoothly covers
+                    # the unlock wink feedback and LogonUI unlock, then restore original level
+                    threading.Timer(2.0, self.brightness.restore).start()
+                else:
+                    self.brightness.restore()
                 # ALWAYS release camera hardware immediately so LED turns off!
                 self.release_camera()
 
@@ -384,9 +453,9 @@ class FaceDaemon:
                     "status": "ready" if has_prof else "unconfigured",
                     "user": self.profile["username"] if has_prof else None
                 }
-            elif cmd_str == "VERIFY":
-                log_service("Lock screen requested face verification...")
-                response = self.verify_current_face(timeout_sec=2.0)
+            elif cmd_str in ("VERIFY", "VERIFY_LOCKSCREEN"):
+                log_service(f"Lock screen requested face verification ({cmd_str})...")
+                response = self.verify_current_face(timeout_sec=2.5, is_lock_screen=True)
                 log_service(f"Verification outcome: status={response.get('status')}")
             elif cmd_str.startswith("SET_TIMEOUT"):
                 parts = cmd_str.split(None, 1)
